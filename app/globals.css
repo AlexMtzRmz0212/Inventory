@@ -1,0 +1,774 @@
+:root {
+  --sea: #0d2339;
+  --sphere: #12304d;
+  --deep: #0a1a2a;
+  --chalk: #eaf0f4;
+  --chalk-dim: rgba(234, 240, 244, 0.66);
+  --marigold: #f5b83d;
+  --line: rgba(234, 240, 244, 0.16);
+  --font-display: var(--font-unbounded), system-ui, sans-serif;
+  --font-body: var(--font-instrument), system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--sea);
+  color: var(--chalk);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--marigold);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Stage */
+.stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--sea);
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.map__sea {
+  fill: var(--sea);
+}
+.map__sphere {
+  fill: var(--sphere);
+}
+.map__graticule {
+  fill: none;
+  stroke: rgba(234, 240, 244, 0.07);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Paper-cut land: a darker copy sits just below, offset in screen pixels at any zoom. */
+.land__shadow {
+  fill: #081522;
+  opacity: 0.6;
+  transform: translate(0, calc(var(--s) * 4px));
+}
+.land {
+  stroke: rgba(10, 26, 42, 0.55);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Flight route and the parcel that rides it */
+.route {
+  fill: none;
+  stroke: var(--marigold);
+  stroke-width: 2;
+  stroke-dasharray: 2 7;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+.route.is-on {
+  opacity: 1;
+}
+.parcel {
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.parcel.is-on {
+  opacity: 1;
+}
+.parcel__body {
+  transform: scale(calc(var(--s) * 1.15));
+  fill: var(--marigold);
+  stroke: var(--deep);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+/* Pins: a donut of the categories inside, with the item count in the middle */
+.pin {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s;
+}
+.map[data-zoom="world"] .pin--continent,
+.map[data-zoom="continent"] .pin--country,
+.map[data-zoom="country"] .pin--city,
+.map[data-zoom="city"] .pin--city,
+.map[data-zoom="city"] .pin--site,
+.map[data-zoom="site"] .pin--site {
+  opacity: 1;
+  pointer-events: auto;
+}
+.stage[data-flying="true"] .map .pin {
+  pointer-events: none;
+}
+.pin__body {
+  transform: scale(calc(var(--s) * 1.15));
+  cursor: pointer;
+  outline: none;
+}
+.pin__hit {
+  fill: transparent;
+}
+.pin__halo {
+  fill: rgba(10, 26, 42, 0.55);
+  stroke: rgba(234, 240, 244, 0.35);
+  stroke-width: 1.5;
+}
+.pin__core {
+  fill: var(--deep);
+}
+.pin__seg {
+  fill: none;
+  stroke-width: 6;
+}
+.pin__empty {
+  fill: none;
+  stroke: rgba(234, 240, 244, 0.25);
+  stroke-width: 6;
+}
+.pin__body:hover .pin__halo,
+.pin__body:focus-visible .pin__halo,
+.pin.is-active .pin__halo {
+  stroke: var(--marigold);
+  stroke-width: 2.5;
+}
+.pin__count {
+  font: 700 9px var(--font-body);
+  fill: var(--chalk);
+  text-anchor: middle;
+}
+.pin__label {
+  font: 600 10.5px var(--font-display);
+  fill: var(--chalk);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--sea);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* Room scene: a flat front-on room that fades in over the map once you arrive */
+.scene {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s;
+}
+.scene.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Ends where the tray begins; the scene's own background continues the floor beneath it. */
+.scene__svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% - var(--tray-h, 0px));
+  display: block;
+}
+.scene__spot {
+  transition: opacity 0.5s;
+}
+.scene__spot.is-dim {
+  opacity: 0.4;
+}
+.furn {
+  cursor: pointer;
+  outline: none;
+}
+.furn:hover,
+.furn:focus-visible {
+  filter: brightness(1.14);
+}
+.scene__label {
+  font: 600 22px var(--font-display);
+  fill: var(--chalk);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(10, 26, 42, 0.75);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+.scene__empty {
+  font: 600 28px var(--font-display);
+  fill: var(--chalk-dim);
+  text-anchor: middle;
+}
+.tile {
+  cursor: pointer;
+  outline: none;
+}
+.tile__bg {
+  fill: var(--deep);
+  stroke-width: 3;
+}
+.tile:hover .tile__bg,
+.tile:focus-visible .tile__bg {
+  fill: var(--sea);
+  stroke-width: 4.5;
+}
+.tile__badge {
+  fill: var(--marigold);
+}
+.tile__count {
+  font: 700 13px var(--font-body);
+  fill: var(--deep);
+  text-anchor: middle;
+}
+.scene__pop {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  width: min(320px, calc(100% - 32px));
+  max-height: 50vh;
+  overflow: auto;
+  padding: 14px 16px;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.scene__pop h2 {
+  margin: 0 0 8px;
+  font: 600 16px var(--font-display);
+}
+.scene__pop ul {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.scene__pop li small {
+  display: block;
+  color: var(--chalk-dim);
+}
+
+/* Top bar */
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  pointer-events: none;
+}
+.topbar > * {
+  pointer-events: auto;
+}
+
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 4px 8px;
+  list-style: none;
+  background: rgba(10, 26, 42, 0.74);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.crumbs li {
+  display: flex;
+  align-items: center;
+}
+.crumbs__sep {
+  color: var(--chalk-dim);
+}
+.crumb {
+  padding: 6px 9px;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  color: var(--chalk-dim);
+  font: 600 12.5px var(--font-display);
+  cursor: pointer;
+}
+.crumb:hover {
+  color: var(--chalk);
+}
+.crumb[aria-current="page"] {
+  color: var(--chalk);
+}
+
+/* Buttons and login */
+.btn {
+  padding: 8px 16px;
+  background: var(--marigold);
+  border: 1px solid var(--marigold);
+  border-radius: 999px;
+  color: var(--deep);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.btn.btn--ghost {
+  background: rgba(10, 26, 42, 0.74);
+  backdrop-filter: blur(8px);
+  border-color: var(--line);
+  color: var(--chalk);
+}
+.btn.btn--ghost:hover {
+  border-color: var(--marigold);
+}
+
+.auth {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.auth__badge {
+  color: var(--marigold);
+  font-weight: 600;
+  font-size: 13px;
+}
+.auth__form {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 270px;
+  padding: 12px;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.auth__form input {
+  flex: 1 1 140px;
+  padding: 8px 12px;
+  background: var(--sea);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.auth__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #ff9b8a;
+  font-size: 13px;
+}
+
+/* Tour: caption and controls while the camera makes its rounds */
+.tourbar {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 16px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 8px 8px 11px 20px;
+  background: rgba(10, 26, 42, 0.84);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  overflow: hidden;
+  transform: translateX(-50%);
+}
+.tourbar__caption {
+  margin: 0;
+  font: 600 13.5px var(--font-display);
+}
+.tourbar__ctl {
+  display: flex;
+  gap: 6px;
+}
+.tourbar .btn {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.tourbar__bar {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background: var(--line);
+}
+.tourbar__bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w, 0%);
+  background: var(--marigold);
+  transition: width 0.6s;
+}
+
+.topbar__right {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.pack-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pack-btn__count {
+  color: var(--marigold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Luggage list: what goes in the bags, and where each thing is right now */
+.pack {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100% - 32px));
+  max-height: calc(100% - 80px);
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.pack__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.pack__head h2 {
+  margin: 0;
+  font: 600 17px var(--font-display);
+}
+.pack__head p {
+  margin: 2px 0 0;
+  color: var(--chalk-dim);
+  font-size: 13px;
+}
+.pack__close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--chalk-dim);
+  cursor: pointer;
+}
+.pack__close:hover {
+  color: var(--chalk);
+  border-color: var(--marigold);
+}
+.pack__body {
+  padding: 4px 16px 16px;
+  overflow-y: auto;
+}
+.pack__group {
+  --c: #9aa7b5;
+  margin-top: 16px;
+}
+.pack__group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--chalk);
+  font: 600 13px var(--font-display);
+}
+.pack__group h3 .pack__icon {
+  color: var(--c);
+}
+.pack__count {
+  margin-left: auto;
+  color: var(--chalk-dim);
+  font: 600 12px var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.pack__bar {
+  display: block;
+  height: 3px;
+  margin: 8px 0 4px;
+  border-radius: 2px;
+  background: var(--line);
+  position: relative;
+}
+.pack__bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w, 0%);
+  border-radius: 2px;
+  background: var(--c);
+}
+.pack__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pack__row--nested {
+  margin-left: 22px;
+  border-left: 1px solid var(--line);
+  padding-left: 8px;
+}
+.pack__line {
+  --c: #9aa7b5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+.pack__icon {
+  display: inline-flex;
+  color: var(--c);
+}
+.pack__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pack__where {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 45%;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--chalk-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.pack__where:hover {
+  color: var(--chalk);
+  border-color: var(--marigold);
+}
+.check {
+  flex: none;
+}
+.check__ring {
+  fill: none;
+  stroke: rgba(234, 240, 244, 0.35);
+  stroke-width: 1.6;
+}
+.check.is-on .check__ring {
+  fill: var(--marigold);
+  stroke: var(--marigold);
+}
+.check__tick {
+  fill: none;
+  stroke: var(--deep);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ring {
+  flex: none;
+}
+.ring__track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+}
+.ring__bar {
+  fill: none;
+  stroke: var(--marigold);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.ring__text {
+  font: 700 8px var(--font-body);
+  fill: var(--chalk);
+  text-anchor: middle;
+}
+
+/* Tray: what is at the place you are looking at */
+.tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 46vh;
+  padding: 56px 16px 16px;
+  overflow-y: auto;
+  background: linear-gradient(to top, rgba(8, 21, 34, 0.95) 45%, rgba(8, 21, 34, 0));
+  transition: opacity 0.4s, transform 0.4s;
+}
+.stage[data-flying="true"] .tray {
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+}
+.tray__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+.tray__title {
+  margin: 0;
+  font: 600 clamp(18px, 3.2vw, 26px) / 1.2 var(--font-display);
+}
+.tray__total {
+  margin: 0;
+  color: var(--chalk-dim);
+}
+.tray__cats {
+  display: flex;
+  gap: 22px;
+  margin: 14px 0 0;
+  padding: 0 0 4px;
+  list-style: none;
+  overflow-x: auto;
+}
+.cat {
+  --c: #9aa7b5;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 64px;
+  color: var(--c);
+}
+.cat b {
+  color: var(--chalk);
+  font: 600 18px var(--font-display);
+}
+.cat__name {
+  grid-column: 1 / -1;
+  color: var(--chalk-dim);
+  font-size: 12.5px;
+}
+.cat__bar {
+  grid-column: 1 / -1;
+  display: block;
+  width: var(--w, 100%);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--c);
+}
+.tray__empty {
+  margin: 12px 0 0;
+  color: var(--chalk-dim);
+}
+.tray__places {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.chip {
+  padding: 7px 14px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--chalk);
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--marigold);
+}
+.chip.chip--side {
+  color: var(--chalk-dim);
+  border-style: dashed;
+}
+.tray__sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+.btn {
+  white-space: nowrap;
+}
+.crumbs {
+  min-width: 0;
+}
+
+/* Phones: shorter top bar, and the tour controls move down beside the tray */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .topbar__right {
+    gap: 6px;
+  }
+  .topbar .btn {
+    padding: 7px 12px;
+    font-size: 13.5px;
+  }
+  .pack-btn__label {
+    display: none;
+  }
+  .tourbar {
+    top: auto;
+    bottom: calc(var(--tray-h, 0px) + 10px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin,
+  .route,
+  .parcel,
+  .tray {
+    transition: none;
+  }
+}
