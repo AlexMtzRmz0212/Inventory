@@ -16,13 +16,11 @@ import {
 } from "@/lib/camera";
 import type { MapData } from "@/lib/map";
 import { categoryColor, DEFAULT_TINT, NEUTRAL_LAND } from "@/lib/palette";
-import { buildPacking } from "@/lib/packing";
 import { chainTo, countByCategory, indexPlaces, itemsIn } from "@/lib/places";
 import { buildTour } from "@/lib/tour";
 import type { Inventory, Level, Place } from "@/lib/types";
 import { CategoryIcon } from "./CategoryIcon";
 import { LoginPanel } from "./LoginPanel";
-import PackingPanel from "./PackingPanel";
 import RoomScene from "./RoomScene";
 import { useTour } from "./useTour";
 
@@ -60,8 +58,6 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   const idx = useMemo(() => indexPlaces(inventory.places), [inventory.places]);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [flying, setFlying] = useState(false);
-  const [packingOpen, setPackingOpen] = useState(false);
-  const packing = useMemo(() => buildPacking(inventory, idx), [inventory, idx]);
   /** The room that is mounted; it stays mounted while fading out on the way to another place. */
   const [sceneSiteId, setSceneSiteId] = useState<string | null>(null);
 
@@ -74,7 +70,6 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   const aspectRef = useRef(16 / 9);
   const focusRef = useRef<string | null>(null);
   const flightRef = useRef<{ stop: () => void } | null>(null);
-  const packingOpenRef = useRef(false);
 
   const apply = useCallback((c: Cam) => {
     camRef.current = c;
@@ -212,17 +207,8 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   );
 
   useEffect(() => {
-    packingOpenRef.current = packingOpen;
-  }, [packingOpen]);
-
-  useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // The luggage list sits on top: Escape closes it before it climbs the map.
-      if (packingOpenRef.current) {
-        setPackingOpen(false);
-        return;
-      }
       const current = focusRef.current;
       if (current) go(idx.byId.get(current)?.parentId ?? null);
       else stopTour();
@@ -302,7 +288,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
             return (
               <g
                 key={place.id}
-                className={`pin pin--${place.level.toLowerCase()}${active ? " is-active" : ""}`}
+                className={`pin pin--${place.level.toLowerCase()}${active ? " is-active" : ""}${chain.some((c) => c.id === place.id) ? " is-here" : ""}`}
                 transform={`translate(${pos[0]} ${pos[1]})`}
               >
                 <g
@@ -404,31 +390,12 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
           </ol>
         </nav>
         <div className="topbar__right">
-          {tour.status === "idle" && steps.length > 2 && (
-            <button type="button" className="btn btn--ghost pack-btn" onClick={tour.play}>
+          {!isPrivate && tour.status === "idle" && steps.length > 2 && (
+            <button type="button" className="btn btn--ghost topbar-btn" onClick={tour.play}>
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
                 <path d="M3 1.5v11l9-5.5Z" fill="currentColor" />
               </svg>
               Tour
-            </button>
-          )}
-          {packing.total > 0 && (
-            <button
-              type="button"
-              className="btn btn--ghost pack-btn"
-              aria-expanded={packingOpen}
-              onClick={() => {
-                tour.stop();
-                setPackingOpen((o) => !o);
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M4 7h16v12H4ZM4 12h16" />
-              </svg>
-              <span className="pack-btn__label">Luggage</span>
-              <span className="pack-btn__count">
-                {packing.packed}/{packing.total}
-              </span>
             </button>
           )}
           <LoginPanel isPrivate={isPrivate} />
@@ -465,17 +432,6 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
           </div>
           <i className="tourbar__bar" style={{ "--w": `${tour.progress * 100}%` } as CSSProperties} />
         </div>
-      )}
-
-      {packingOpen && (
-        <PackingPanel
-          packing={packing}
-          onClose={() => setPackingOpen(false)}
-          onGo={(placeId) => {
-            setPackingOpen(false);
-            go(placeId);
-          }}
-        />
       )}
 
       <section ref={trayRef} className="tray" aria-live="polite">

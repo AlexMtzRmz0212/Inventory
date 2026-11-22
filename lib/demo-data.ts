@@ -1,4 +1,4 @@
-import type { Container, Inventory, Item, LuggageEntry, Place } from "./types";
+import type { Container, Inventory, Item, Place } from "./types";
 
 /**
  * The world visitors see: invented places and generic things, same shape as the
@@ -18,6 +18,7 @@ const places: Place[] = [
   { id: "studio", name: "Studio", level: "Site", lat: null, lng: null, scene: "apartment", parentId: "osaka" },
   { id: "desk", name: "Desk", level: "Spot", lat: null, lng: null, scene: "apartment", parentId: "apartment" },
   { id: "closet", name: "Closet", level: "Spot", lat: null, lng: null, scene: "apartment", parentId: "apartment" },
+  { id: "shoe-rack", name: "Shoe rack", level: "Spot", lat: null, lng: null, scene: "apartment", parentId: "apartment" },
   { id: "shelf", name: "Shelf", level: "Spot", lat: null, lng: null, scene: "storage-unit", parentId: "storage" },
   { id: "crate", name: "Crate", level: "Spot", lat: null, lng: null, scene: "storage-unit", parentId: "storage" },
   { id: "studio-desk", name: "Desk", level: "Spot", lat: null, lng: null, scene: "apartment", parentId: "studio" },
@@ -39,6 +40,9 @@ const item = (
   notes: "",
   locationId,
   boxId: null,
+  clothesType: null,
+  color: null,
+  cover: null,
   ...extra,
 });
 
@@ -46,6 +50,11 @@ const items: Item[] = [
   // Apartment (floor)
   item("armchair", "Armchair", "Furniture", "apartment"),
   item("floor-lamp", "Floor lamp", "Furniture", "apartment", { fragile: true }),
+  // Apartment shoe rack
+  item("rack-sneakers", "Brown dress sneakers", "Clothes", "shoe-rack"),
+  item("rack-boots", "Taupe boots", "Clothes", "shoe-rack", { color: "taupe" }),
+  item("rack-running", "Black running shoes", "Clothes", "shoe-rack"),
+  item("rack-slippers", "Beige slippers", "Clothes", "shoe-rack"),
   // Apartment desk
   item("laptop", "Laptop", "Electronics", "desk", { fragile: true }),
   item("laptop-charger", "Laptop charger", "Electronics", "desk"),
@@ -59,16 +68,43 @@ const items: Item[] = [
   item("sneakers", "Sneakers", "Clothes", "closet"),
   item("dress-shirt", "Dress shirt", "Clothes", "closet"),
   item("rain-jacket", "Rain jacket", "Clothes", "closet"),
-  item("scarf", "Scarf", "Clothes", "closet"),
+  item("scarf", "Gray scarf", "Clothes", "closet", { boxId: "box-closet" }),
   item("sweaters", "Sweaters (x4)", "Clothes", "closet"),
-  item("hat", "Hat", "Clothes", "closet"),
-  item("boots", "Boots", "Clothes", "closet"),
-  item("blanket", "Spare blanket", "Misc", "closet"),
+  item("hat", "Hat", "Clothes", "closet", { boxId: "box-closet" }),
+  item("boots", "Boots", "Clothes", "closet", { boxId: "box-closet" }),
+  item("blanket", "Spare blanket", "Misc", "closet", { boxId: "box-closet" }),
+  // Closet, in the travel backpack
+  item("pack-docs", "Folder of documents", "Documents", "closet", { boxId: "travel-pack" }),
+  item("pack-bank", "Power bank", "Electronics", "closet", { boxId: "travel-pack" }),
+  item("pack-shirt", "Spare shirt", "Clothes", "closet", { boxId: "travel-pack" }),
+  item("pack-book", "Paperback", "Books", "closet", { boxId: "travel-pack" }),
   // Storage unit (floor)
   item("folding-table", "Folding table", "Furniture", "storage"),
-  item("kitchenware", "Boxed kitchenware", "Kitchen", "storage", { fragile: true }),
-  item("coffee-maker", "Coffee maker", "Kitchen", "storage"),
-  item("old-monitor", "Old monitor", "Electronics", "storage", { fragile: true }),
+  item("small-desk", "Small desk", "Furniture", "storage", { notes: "Disassembled." }),
+  // Storage unit, in the gym bag
+  item("gym-polo", "Green polo shirt", "Clothes", "storage", { boxId: "gym-bag" }),
+  item("gym-shorts", "Black sport shorts", "Clothes", "storage", { boxId: "gym-bag" }),
+  item("gym-vest", "Gray vest", "Clothes", "storage", { boxId: "gym-bag" }),
+  item("gym-sandals", "Sandals", "Clothes", "storage", { boxId: "gym-bag" }),
+  item("kitchenware", "Boxed kitchenware", "Kitchen", "storage", { fragile: true, boxId: "box-storage" }),
+  item("coffee-maker", "Coffee maker", "Kitchen", "storage", { boxId: "box-storage" }),
+  item("old-monitor", "Old monitor", "Electronics", "storage", { fragile: true, boxId: "box-storage" }),
+  item("spare-cables", "Spare cables", "Electronics", "storage", { boxId: "box-storage" }),
+  // Storage unit, in the teal suitcase
+  item("linen-shirt", "Blue linen shirt", "Clothes", "storage", { boxId: "suitcase-teal" }),
+  item("swim-trunks", "Red swim trunks", "Clothes", "storage", { boxId: "suitcase-teal" }),
+  item("sun-hat", "Sun hat", "Clothes", "storage", { boxId: "suitcase-teal" }),
+  item("sandals", "Sandals", "Clothes", "storage", { boxId: "suitcase-teal" }),
+  item("sunscreen", "Sunscreen", "Toiletries", "storage", { boxId: "suitcase-teal" }),
+  item("beach-read", "Beach read", "Books", "storage", { boxId: "suitcase-teal" }),
+  // Storage unit, in the large black suitcase
+  item("wool-sweater", "Gray wool sweater", "Clothes", "storage", { boxId: "suitcase-black" }),
+  item("dress-pants", "Black dress pants", "Clothes", "storage", { boxId: "suitcase-black" }),
+  item("leather-shoes", "Brown leather shoes", "Clothes", "storage", { boxId: "suitcase-black" }),
+  item("black-jacket", "Black jacket", "Clothes", "storage", { boxId: "suitcase-black" }),
+  item("travel-adapter", "Travel adapter", "Electronics", "storage", { boxId: "suitcase-black" }),
+  item("guidebook", "Guidebook", "Books", "storage", { boxId: "suitcase-black" }),
+  item("passport-folder", "Folder of tickets", "Documents", "storage", { boxId: "suitcase-black" }),
   // Storage shelf
   item("novel", "Detective novel", "Books", "shelf"),
   item("scifi", "Sci-fi paperback", "Books", "shelf"),
@@ -88,6 +124,11 @@ const items: Item[] = [
   // Studio (floor)
   item("futon", "Futon", "Furniture", "studio"),
   item("folding-bike", "Folding bike", "Misc", "studio"),
+  // Studio, in the carry-on
+  item("carry-shirt", "White shirt", "Clothes", "studio", { boxId: "carry-on" }),
+  item("travel-charger", "Travel charger", "Electronics", "studio", { boxId: "carry-on" }),
+  item("paperback", "Paperback", "Books", "studio", { boxId: "carry-on" }),
+  item("boarding-pass", "Folder of boarding passes", "Documents", "studio", { boxId: "carry-on" }),
   // Studio desk
   item("tablet", "Tablet", "Electronics", "studio-desk", { fragile: true }),
   item("camera", "Camera", "Electronics", "studio-desk", { fragile: true }),
@@ -120,6 +161,7 @@ const box = (
   heightCm: h,
   lengthCm: l,
   volumeL: Math.round((w * h * l) / 100) / 10,
+  filled: false,
   locationId,
 });
 
@@ -129,27 +171,12 @@ const containers: Container[] = [
   box("box-closet", "Cardboard box", "Cardboard box", null, 45, 13, 44, "closet"),
   box("box-storage", "Cardboard box", "Cardboard box", null, 39, 24, 48, "storage"),
   box("carry-on", "Carry-on", "Suitcase", "Brown", 36, 23, 55, "studio"),
+  box("gym-bag", "Gym bag", "Bag", "Navy & gold", 44, 25, 60, "storage"),
+  box("spare-case-1", "Black spare case", "Suitcase", "Black", 40, 22, 53, "storage"),
+  box("spare-case-2", "Red spare case", "Suitcase", "Red", 42, 24, 58, "storage"),
+  box("spare-case-3", "Teal spare case", "Suitcase", "Teal", 38, 20, 50, "storage"),
+  box("travel-pack", "Travel backpack", "Backpack", "Olive", 35, 20, 55, "closet"),
+  box("wallet", "Wallet", "Wallet", "Brown", 11, 2, 9, "desk"),
 ];
 
-const entry = (
-  id: string,
-  name: string,
-  group: string,
-  itemId: string,
-  packed = false,
-  parentId: string | null = null,
-): LuggageEntry => ({ id, name, group, packed, itemId, parentId });
-
-const luggage: LuggageEntry[] = [
-  entry("l-laptop", "Laptop", "Electronics", "laptop", true),
-  entry("l-laptop-charger", "Laptop charger", "Electronics", "laptop-charger", true, "l-laptop"),
-  entry("l-headphones", "Headphones", "Electronics", "headphones", true),
-  entry("l-tablet", "Tablet", "Electronics", "tablet", true),
-  entry("l-camera", "Camera", "Electronics", "camera", true),
-  entry("l-novel", "Detective novel", "Books", "novel"),
-  entry("l-cookbook", "Cookbook", "Books", "cookbook"),
-  entry("l-coat", "Winter coat", "Clothes", "winter-coat"),
-  entry("l-documents", "Folder of documents", "Documents", "documents"),
-];
-
-export const demoInventory: Inventory = { places, items, containers, luggage };
+export const demoInventory: Inventory = { places, items, containers };

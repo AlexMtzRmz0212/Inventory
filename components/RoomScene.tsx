@@ -1,30 +1,43 @@
 "use client";
 
 import { animate } from "framer-motion";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { lerp } from "@/lib/camera";
-import { categoryColor } from "@/lib/palette";
+import { artKind, artOf } from "@/lib/item-art";
 import type { PlaceIndex } from "@/lib/places";
 import {
   BASE_Y,
+  BURST_ITEM,
   FLOOR_BOX_Y,
   FLOOR_ITEMS_Y,
   FLOOR_Y,
   FURNITURE_WIDTH,
+  MAX_INDIVIDUAL,
   SCENE_H,
   SCENE_W,
+  burstPlan,
+  lineupPlan,
+  containerAccent,
   containerColor,
-  containerSize,
   furnitureKind,
-  groupItems,
+  itemsByContainer,
+  layoutBoxes,
   mix,
+  peekCount,
+  peekPicks,
+  peekSlots,
+  placeOnLevels,
   slotsFor,
+  type BurstPlan,
   type Furniture,
   type Group,
+  type Level,
+  type LineupPlan,
+  type PlacedBox,
 } from "@/lib/scene";
-import type { Container, Inventory, Place } from "@/lib/types";
-import { CategoryGlyph } from "./CategoryIcon";
+import type { Container, Inventory, Item, Place } from "@/lib/types";
+import { ItemArt } from "./ItemArt";
 
 interface Props {
   site: Place;
@@ -39,15 +52,44 @@ interface Props {
 }
 
 const EASE = [0.65, 0, 0.35, 1] as const;
-const TILE = 54;
 
-/** Where items rest on each kind of furniture, and how wide that surface is. */
-const SURFACE: Record<Furniture, { y: number; width: number }> = {
-  desk: { y: 372, width: 370 },
-  closet: { y: 336, width: 210 },
-  shelf: { y: 476, width: 270 },
-  crate: { y: 420, width: 190 },
+/**
+ * Where things stand on each kind of furniture, front row first. The desk is drawn from a little
+ * above, so its rows run back across the top, each a bit smaller and narrower.
+ */
+const LEVELS: Record<Furniture, Level[]> = {
+  desk: [
+    { y: 398, width: 310, scale: 1 },
+    { y: 361, width: 270, scale: 0.84 },
+    { y: 329, width: 235, scale: 0.7 },
+    { y: 301, width: 205, scale: 0.58 },
+  ],
+  closet: [
+    { y: 358, width: 210, scale: 1 },
+    { y: 300, width: 210, scale: 1 },
+  ],
+  shelf: [
+    { y: 498, width: 270, scale: 1 },
+    { y: 398, width: 270, scale: 1 },
+    { y: 298, width: 270, scale: 1 },
+  ],
+  crate: [
+    { y: 430, width: 190, scale: 1 },
+    { y: 384, width: 170, scale: 0.9 },
+  ],
 };
+
+/** Loose items on a site's floor, when there is no rack for them. */
+const FLOOR_LEVELS: Level[] = [
+  { y: FLOOR_ITEMS_Y, width: 1000, scale: 1 },
+  { y: FLOOR_ITEMS_Y - 52, width: 1000, scale: 1 },
+];
+
+/** The two sides of a storage unit, where shelving racks stand clear of the luggage in the middle. */
+const RACK_ZONES = [
+  { x0: 120, x1: 350 },
+  { x0: 850, x1: 1080 },
+];
 
 function onKey(e: KeyboardEvent, fn: () => void) {
   if (e.key === "Enter" || e.key === " ") {
@@ -57,20 +99,78 @@ function onKey(e: KeyboardEvent, fn: () => void) {
 }
 
 export default function RoomScene({ site, idx, inventory, tint, focusId, visible, onFocus }: Props) {
-  const patternId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const aspectRef = useRef(16 / 9);
+  /** Same as aspectRef, for the layout that depends on it while rendering. */
+  const [aspect, setAspect] = useState(16 / 9);
   const camRef = useRef<{ cx: number; cy: number; w: number } | null>(null);
   const firstRef = useRef(true);
   const [picked, setPicked] = useState<{ group: Group; at: string | null } | null>(null);
+  /** The container that is open, and where the camera was when it opened. */
+  const [open, setOpen] = useState<{ id: string; at: string | null } | null>(null);
 
   const spots = useMemo(
     () => (idx.children.get(site.id) ?? []).filter((p) => p.level === "Spot"),
     [idx, site.id],
   );
-  const { xs } = useMemo(() => slotsFor(spots.length), [spots.length]);
+  const kinds = useMemo(() => spots.map((p) => furnitureKind(p.name)), [spots]);
+  const { xs, span } = useMemo(() => slotsFor(kinds), [kinds]);
   const spotIndex = spots.findIndex((s) => s.id === focusId);
+
+  const boxesAt = (id: string) => inventory.containers.filter((c) => c.locationId === id);
+  const contents = useMemo(() => itemsByContainer(inventory), [inventory]);
+
+  // An item inside a container drawn here comes out of it instead of standing around on its own.
+  const hereIds = new Set([site.id, ...spots.map((s) => s.id)]);
+  const drawnBoxIds = new Set(
+    inventory.containers.filter((c) => c.locationId && hereIds.has(c.locationId)).map((c) => c.id),
+  );
+  const itemsAt = (id: string) =>
+    inventory.items.filter((i) => i.locationId === id && !(i.boxId && drawnBoxIds.has(i.boxId)));
+
+  // A desk that is also a place is already drawn as furniture, so skip its item row.
+  const furnitureNames = new Set(spots.map((s) => s.name.trim().toLowerCase()));
+  const looseFloor = itemsAt(site.id).filter((i) => !furnitureNames.has(i.name.trim().toLowerCase()));
+  // Furniture that has been taken apart lies in pieces instead of standing as an item.
+  const taken = looseFloor.filter((i) => artKind(i) === "deskparts");
+  const rest = looseFloor.filter((i) => artKind(i) !== "deskparts");
+  // With no furniture to put things on and too many to line up on the floor, shelving racks
+  // along the two sides hold them by category, leaving the middle to the luggage.
+  const rackOn = spots.length === 0 && rest.length > MAX_INDIVIDUAL;
+
+  // Containers are laid out once, so the open one can fan its items out above everything else.
+  const hasItems = (c: Container) => (contents.get(c.id)?.length ?? 0) > 0;
+  const spotBoxes = spots.map((spot, i) => {
+    const kind = furnitureKind(spot.name);
+    const here = boxesAt(spot.id);
+    // A wallet is small enough to sit on top of the furniture instead of standing on the floor in front of it.
+    const small = here.filter((c) => c.type === "Wallet");
+    return [
+      ...layoutBoxes(here.filter((c) => c.type !== "Wallet"), xs[i], BASE_Y - 6, FURNITURE_WIDTH[kind] - 50, hasItems),
+      ...layoutBoxes(small, xs[i] + 150, LEVELS[kind][0].y - 4, 90, hasItems, 4.5),
+    ];
+  });
+  const floorBoxes = layoutBoxes(boxesAt(site.id), SCENE_W / 2, FLOOR_BOX_Y, rackOn ? 480 : 1100, hasItems);
+  const placedBoxes = [...spotBoxes.flat(), ...floorBoxes];
+  const live = visible && open && open.at === focusId ? open : null;
+  const openId = live ? live.id : null;
+  const stackId = live && live.id.startsWith("stack:") ? live.id.slice(6) : null;
+  const openBox = live && !stackId ? (placedBoxes.find((p) => p.c.id === live.id) ?? null) : null;
+  // A stack that was clicked: its containers stand up in a row so each can be told from the others.
+  const stackBoxes = stackId ? placedBoxes.filter((p) => p.column?.[0] === stackId) : [];
+  const lineup =
+    stackBoxes.length > 0
+      ? lineupPlan(
+          stackBoxes.map((p) => p.c),
+          stackBoxes[0].left + stackBoxes[0].w / 2,
+          stackBoxes[0].base,
+          aspect,
+        )
+      : null;
+  // The open container's items, and the camera that fits them to the screen.
+  const openItems = live ? (contents.get(live.id) ?? []) : [];
+  const burst = openBox && openItems.length > 0 ? burstPlan(openBox, openItems.length, aspect) : null;
 
   const wall = mix(tint, "#0a1a2a", 0.78);
   const wallDeep = mix(tint, "#0a1a2a", 0.88);
@@ -90,9 +190,13 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
   // Frame by height first (furniture stands between y=190 and y=700), then widen to fit.
   const targetCam = () => {
     const a = aspectRef.current;
+    if (burst) return burst.frame;
+    if (lineup) return lineup.frame;
+    // A desk is looked at closer, so the things on it fill the screen.
+    if (spotIndex >= 0 && kinds[spotIndex] === "desk") return { cx: xs[spotIndex], cy: 338, w: Math.max(310, 198 * a) };
     return spotIndex >= 0
       ? { cx: xs[spotIndex], cy: 400, w: Math.max(520, 420 * a) }
-      : { cx: SCENE_W / 2, cy: 440, w: Math.max(1100, 620 * a) };
+      : { cx: SCENE_W / 2, cy: 440, w: Math.max(1100, 620 * a, span + 180) };
   };
 
   useEffect(() => {
@@ -106,7 +210,10 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
       apply(camRef.current ?? targetCam());
     };
     measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() => {
+      measure();
+      setAspect(aspectRef.current);
+    });
     ro.observe(el);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,24 +244,22 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
     });
     return () => ctrl.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spotIndex, spots.length]);
+  }, [spotIndex, spots.length, burst?.frame.cx, burst?.frame.cy, burst?.frame.w, lineup?.frame.cx, lineup?.frame.cy, lineup?.frame.w]);
 
-  const itemsAt = (id: string) => inventory.items.filter((i) => i.locationId === id);
-  const boxesAt = (id: string) => inventory.containers.filter((c) => c.locationId === id);
   const pick = (group: Group) => setPicked({ group, at: focusId });
-
-  // A desk that is also a place is already drawn as furniture, so skip its item row.
-  const furnitureNames = new Set(spots.map((s) => s.name.trim().toLowerCase()));
-  const floorItems = groupItems(
-    itemsAt(site.id).filter((i) => !furnitureNames.has(i.name.trim().toLowerCase())),
-  );
-  const floorBoxes = boxesAt(site.id);
   const isEmpty =
     spots.length === 0 &&
-    floorItems.length === 0 &&
+    rest.length === 0 &&
+    taken.length === 0 &&
     floorBoxes.length === 0;
 
   const showPicked = visible && picked && picked.at === focusId ? picked.group : null;
+  const toggle = (id: string) => {
+    setPicked(null);
+    setOpen(openId === id ? null : { id, at: focusId });
+  };
+  const pickItem = (i: Item) =>
+    pick({ key: i.id, label: i.name, category: i.category, items: [i], pile: false });
 
   return (
     <div
@@ -169,19 +274,19 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
         viewBox={`0 0 ${SCENE_W} ${SCENE_H}`}
         role="group"
         aria-label={`Inside ${site.name}`}
-        onClick={() => setPicked(null)}
+        onClick={() => {
+          setPicked(null);
+          setOpen(null);
+        }}
       >
-        <defs>
-          <pattern id={patternId} width="26" height="12" patternUnits="userSpaceOnUse">
-            <path d="M13 0v12" stroke={wallDeep} strokeWidth="5" />
-          </pattern>
-        </defs>
-
         {/* Room shell */}
-        <rect x={-4000} y={-4000} width={9200} height={4000 + FLOOR_Y} fill={wall} />
-        <rect x={-4000} y={FLOOR_Y} width={9200} height={4000} fill={floor} />
-        {site.scene === "storage-unit" && (
-          <rect x={-4000} y={-4000} width={9200} height={4000 + FLOOR_Y} fill={`url(#${patternId})`} opacity={0.7} />
+        {site.scene === "storage-unit" ? (
+          <StorageShell tint={tint} />
+        ) : (
+          <>
+            <rect x={-4000} y={-4000} width={9200} height={4000 + FLOOR_Y} fill={wall} />
+            <rect x={-4000} y={FLOOR_Y} width={9200} height={4000} fill={floor} />
+          </>
         )}
         {site.scene === "apartment" && (
           <g>
@@ -190,15 +295,14 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
             <rect x={70} y={120} width={200} height={240} rx={6} fill="none" stroke={wallDeep} strokeWidth="10" />
           </g>
         )}
-        <rect x={-4000} y={FLOOR_Y - 8} width={9200} height={16} fill={wallDeep} />
+        {site.scene !== "storage-unit" && (
+          <rect x={-4000} y={FLOOR_Y - 8} width={9200} height={16} fill={wallDeep} />
+        )}
 
         {spots.map((spot, i) => {
           const kind = furnitureKind(spot.name);
           const x = xs[i];
           const dim = focusId !== null && focusId !== spot.id;
-          const groups = groupItems(itemsAt(spot.id));
-          const boxes = boxesAt(spot.id);
-          const surface = SURFACE[kind];
           return (
             <g key={spot.id} className={dim ? "scene__spot is-dim" : "scene__spot"}>
               <ellipse cx={x} cy={BASE_Y + 6} rx={FURNITURE_WIDTH[kind] * 0.55} ry={12} fill="#000" opacity={0.22} />
@@ -221,14 +325,40 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
                   {spot.name}
                 </text>
               </g>
-              <Boxes boxes={boxes} cx={x} base={BASE_Y - 6} availW={FURNITURE_WIDTH[kind] - 50} />
-              <Tiles groups={groups} cx={x} y={surface.y} maxW={surface.width} visible={visible} onPick={pick} />
+              <Boxes placed={spotBoxes[i]} contents={contents} openId={openId} visible={visible} onToggle={toggle} />
+              <Standing items={itemsAt(spot.id)} levels={LEVELS[kind]} cx={kind === "desk" ? x - 40 : x} visible={visible} onPick={pickItem} />
             </g>
           );
         })}
 
-        <Boxes boxes={floorBoxes} cx={SCENE_W / 2} base={FLOOR_BOX_Y} availW={1100} />
-        <Tiles groups={floorItems} cx={SCENE_W / 2} y={FLOOR_ITEMS_Y} maxW={1100} visible={visible} onPick={pick} />
+        {/* Behind the luggage: things against the back wall. */}
+        {taken.map((it, i) => (
+          <TakenApart
+            key={it.id}
+            item={it}
+            x={rackOn ? RACK_ZONES[0].x0 + 115 + i * 130 : 190 + i * 150}
+            y={rackOn ? FLOOR_Y + 85 : FLOOR_Y - 55}
+            size={rackOn ? 120 : 150}
+            visible={visible}
+            onPick={() => pickItem(it)}
+          />
+        ))}
+        {rackOn && <SideRacks items={rest} tint={tint} visible={visible} onPick={pickItem} />}
+        <Boxes placed={floorBoxes} contents={contents} openId={openId} visible={visible} onToggle={toggle} />
+        {!rackOn && <Standing items={rest} levels={FLOOR_LEVELS} cx={SCENE_W / 2} visible={visible} onPick={pickItem} />}
+
+        {lineup && <Lineup plan={lineup} visible={visible} />}
+
+        {openBox && burst && (
+          <Burst
+            box={openBox}
+            items={openItems}
+            showBox
+            plan={burst}
+            visible={visible}
+            onPickItem={pickItem}
+          />
+        )}
 
         {isEmpty && (
           <text className="scene__empty" x={SCENE_W / 2} y={380}>
@@ -236,6 +366,19 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
           </text>
         )}
       </svg>
+
+      {(openBox || lineup) && (
+        <button
+          type="button"
+          className="btn btn--ghost scene__close"
+          onClick={() => {
+            setPicked(null);
+            setOpen(null);
+          }}
+        >
+          {openBox ? `Close ${openBox.c.name}` : "Put the stack back"}
+        </button>
+      )}
 
       {showPicked && (
         <aside className="scene__pop" role="dialog" aria-label={showPicked.label}>
@@ -267,98 +410,349 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
   );
 }
 
-function Tiles({
-  groups,
-  cx,
-  y,
-  maxW,
-  visible,
-  onPick,
-}: {
-  groups: Group[];
-  cx: number;
-  y: number;
-  maxW: number;
-  visible: boolean;
-  onPick: (g: Group) => void;
-}) {
-  const perRow = Math.max(1, Math.floor(maxW / TILE));
-  const rows: Group[][] = [];
-  for (let i = 0; i < groups.length; i += perRow) rows.push(groups.slice(i, i + perRow));
+/** A one-point-perspective storage unit: corrugated walls, ceiling and floor running out to the screen edges. */
+function StorageShell({ tint }: { tint: string }) {
+  const wall = mix(tint, "#0a1a2a", 0.62);
+  const side = mix(tint, "#0a1a2a", 0.74);
+  const wallDeep = mix(tint, "#0a1a2a", 0.84);
+  const ceiling = mix(tint, "#0a1a2a", 0.88);
+  const floor = mix(tint, "#0a1a2a", 0.93);
+  // The back wall, and the point every edge of the room runs toward.
+  const L = 110, R = 1090, T = 150, B = FLOOR_Y;
+  const vx = 600, vy = 380, k = 9;
+  const far = ([x, y]: number[]) => [vx + (x - vx) * k, vy + (y - vy) * k];
+  const [tlx, tly] = far([L, T]), [trx, try_] = far([R, T]), [blx, bly] = far([L, B]), [brx, bry] = far([R, B]);
+  /** Y of the top and bottom edge of a side wall at x. */
+  const edge = (x: number) => {
+    const s = Math.abs(vx - x) / (vx - L);
+    return [vy + (T - vy) * s, vy + (B - vy) * s];
+  };
+  // Ribs of the corrugated metal: closer together far away, wider apart up close.
+  const ribs = Array.from({ length: 22 }, (_, i) => 36 * (Math.pow(1.22, i) - 1) + 14 * i);
+  const left = ribs.map((d) => L - d);
+  const right = ribs.map((d) => R + d);
+  const rib = (x: number) => {
+    const [t, b] = edge(x);
+    return `M${x} ${t}V${b}`;
+  };
   return (
     <g>
-      {rows.map((row, r) =>
-        row.map((g, i) => {
-          const tx = cx - (row.length * TILE) / 2 + TILE / 2 + i * TILE;
-          const ty = y - r * TILE;
-          const color = categoryColor(g.category);
-          const open = () => onPick(g);
-          return (
-            <g
-              key={g.key}
-              className="tile"
-              role="button"
-              tabIndex={visible ? 0 : -1}
-              aria-label={g.pile ? `${g.label}, ${g.items.length} items` : g.label}
-              onClick={(e) => {
-                e.stopPropagation();
-                open();
-              }}
-              onKeyDown={(e) => onKey(e, open)}
-            >
-              <title>{g.pile ? `${g.label} (${g.items.length})` : g.label}</title>
-              <circle className="tile__bg" cx={tx} cy={ty} r={g.pile ? 25 : 22} stroke={color} />
-              <CategoryGlyph category={g.category} x={tx - 11} y={ty - 11} size={22} color={color} />
-              {g.pile && (
-                <>
-                  <circle className="tile__badge" cx={tx + 18} cy={ty - 18} r={11} />
-                  <text className="tile__count" x={tx + 18} y={ty - 14}>
-                    {g.items.length}
-                  </text>
-                </>
-              )}
-            </g>
-          );
-        }),
-      )}
+      <polygon points={`${L},${T} ${R},${T} ${trx},${try_} ${tlx},${tly}`} fill={ceiling} />
+      <polygon points={`${L},${B} ${R},${B} ${brx},${bry} ${blx},${bly}`} fill={floor} />
+      <polygon points={`${L},${T} ${L},${B} ${blx},${bly} ${tlx},${tly}`} fill={side} />
+      <polygon points={`${R},${T} ${R},${B} ${brx},${bry} ${trx},${try_}`} fill={side} />
+      <rect x={L} y={T} width={R - L} height={B - T} fill={wall} />
+      {/* Ribs on the back wall and both side walls */}
+      <path d={Array.from({ length: 31 }, (_, i) => `M${L + 13 + i * 26} ${T}V${B}`).join("")} stroke={wallDeep} strokeWidth="5" opacity="0.7" />
+      <path d={left.map(rib).join("")} stroke={wallDeep} strokeWidth="5" opacity="0.8" />
+      <path d={right.map(rib).join("")} stroke={wallDeep} strokeWidth="5" opacity="0.8" />
+      {/* Where the walls meet the floor and ceiling */}
+      <path d={`M${L} ${T}H${R}V${B}H${L}Z`} fill="none" stroke={wallDeep} strokeWidth="6" />
+      <path d={`M${L} ${B}L${blx} ${bly}M${R} ${B}L${brx} ${bry}M${L} ${T}L${tlx} ${tly}M${R} ${T}L${trx} ${try_}`} stroke={wallDeep} strokeWidth="6" />
     </g>
   );
 }
 
-/** Luggage and boxes, drawn to scale from their real dimensions. */
-function Boxes({ boxes, cx, base, availW }: { boxes: Container[]; cx: number; base: number; availW: number }) {
-  if (boxes.length === 0) return null;
-  const gap = 18;
-  const unit = boxes.reduce((sum, c) => sum + containerSize(c, 1).w, 0);
-  const scale = Math.min(2.6, (availW - gap * (boxes.length - 1)) / unit);
-  const start = cx - (unit * scale + gap * (boxes.length - 1)) / 2;
-  const placed = boxes.reduce<{ c: Container; left: number; w: number; h: number }[]>((acc, c) => {
-    const { w, h } = containerSize(c, scale);
-    const prev = acc[acc.length - 1];
-    const left = prev ? prev.left + prev.w + gap : start;
-    return [...acc, { c, left, w, h }];
-  }, []);
+/** Items standing on a piece of furniture (or the floor), drawn as themselves, front row first. */
+function Standing({
+  items,
+  levels,
+  cx,
+  visible,
+  onPick,
+}: {
+  items: Item[];
+  levels: Level[];
+  cx: number;
+  visible: boolean;
+  onPick: (i: Item) => void;
+}) {
+  // Back rows first, so the front ones overlap them.
+  const placed = placeOnLevels(items, levels, cx).sort((a, b) => a.y - b.y);
   return (
     <g>
-      {placed.map(({ c, left, w, h }) => (
-        <Luggage key={c.id} c={c} left={left} base={base} w={w} h={h} />
+      {placed.map(({ item, x, y, size }) => (
+        <g
+          key={item.id}
+          className="rack__item"
+          role="button"
+          tabIndex={visible ? 0 : -1}
+          aria-label={item.name}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(item);
+          }}
+          onKeyDown={(e) => onKey(e, () => onPick(item))}
+          transform={`translate(${x} ${y})`}
+        >
+          <title>{item.name}</title>
+          <ItemArt spec={artOf(item)} size={size} />
+        </g>
       ))}
     </g>
   );
 }
 
-function Luggage({ c, left, base, w, h }: { c: Container; left: number; base: number; w: number; h: number }) {
+/**
+ * Shelving racks standing on the two sides of the back wall, one shelf per category (a long
+ * category takes several shelves). Everything is drawn standing on its shelf.
+ */
+function SideRacks({ items, tint, visible, onPick }: { items: Item[]; tint: string; visible: boolean; onPick: (i: Item) => void }) {
+  const by = new Map<string, Item[]>();
+  for (const i of items) by.set(i.category ?? "Other", [...(by.get(i.category ?? "Other") ?? []), i]);
+  const cats = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
+  const BOTTOM = 508;
+  const TOP = 215;
+  const zoneW = RACK_ZONES[0].x1 - RACK_ZONES[0].x0;
+
+  type Shelf = { name: string; first: boolean; total: number; items: Item[] };
+  const build = (size: number): Shelf[] => {
+    const cap = Math.max(1, Math.floor((zoneW - 36) / (size + 6)));
+    const out: Shelf[] = [];
+    for (const [name, list] of cats) {
+      for (let k = 0; k < list.length; k += cap) out.push({ name, first: k === 0, total: list.length, items: list.slice(k, k + cap) });
+    }
+    return out;
+  };
+  // As big as will fit: shrink until each rack's shelves all fit between the floor and the top.
+  let size = 46;
+  for (; size > 24; size -= 2) {
+    if (Math.ceil(build(size).length / 2) <= Math.floor((BOTTOM - TOP) / (size + 26))) break;
+  }
+  const shelves = build(size);
+  const half = Math.ceil(shelves.length / 2);
+  const racks = [shelves.slice(0, half), shelves.slice(half)];
+  const frame = mix(tint, "#eaf0f4", 0.45);
+  const post = mix(tint, "#eaf0f4", 0.25);
+
+  return (
+    <g>
+      {racks.map((list, ri) => {
+        if (list.length === 0) return null;
+        const { x0, x1 } = RACK_ZONES[ri];
+        const levelH = Math.min(100, (BOTTOM - TOP) / list.length);
+        const top = BOTTOM - list.length * levelH;
+        return (
+          <g key={ri}>
+            <rect x={x0 - 8} y={top - 6} width={8} height={BOTTOM - top + 6} fill={post} />
+            <rect x={x1} y={top - 6} width={8} height={BOTTOM - top + 6} fill={post} />
+            {list.map((shelf, li) => {
+              const plank = top + (li + 1) * levelH;
+              return (
+                <g key={li}>
+                  <rect x={x0 - 8} y={plank - 8} width={x1 - x0 + 16} height={8} fill={frame} />
+                  <text className="rack__label" x={x0 + 4} y={plank - levelH + 16}>
+                    {shelf.first ? `${shelf.name} · ${shelf.total}` : shelf.name}
+                  </text>
+                  {shelf.items.map((it, j) => (
+                    <g
+                      key={it.id}
+                      className="rack__item"
+                      role="button"
+                      tabIndex={visible ? 0 : -1}
+                      aria-label={it.name}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPick(it);
+                      }}
+                      onKeyDown={(e) => onKey(e, () => onPick(it))}
+                      transform={`translate(${x0 + 18 + size / 2 + j * (size + 6)} ${plank - 8 - size / 2})`}
+                    >
+                      <title>{it.name}</title>
+                      <ItemArt spec={artOf(it)} size={size} />
+                    </g>
+                  ))}
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** A desk in pieces: the top leaning on the wall and the legs on the floor. */
+function TakenApart({
+  item,
+  x,
+  y,
+  size,
+  visible,
+  onPick,
+}: {
+  item: Item;
+  x: number;
+  y: number;
+  size: number;
+  visible: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <g
+      className="rack__item"
+      role="button"
+      tabIndex={visible ? 0 : -1}
+      aria-label={`${item.name}, taken apart`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPick();
+      }}
+      onKeyDown={(e) => onKey(e, onPick)}
+    >
+      <title>{`${item.name} (taken apart)`}</title>
+      <g transform={`translate(${x} ${y})`}>
+        <ItemArt spec={artOf(item)} size={size} />
+      </g>
+      <text className="scene__label" x={x} y={y + size / 2 + 22}>
+        {item.name}
+      </text>
+    </g>
+  );
+}
+
+/** Luggage and boxes, drawn to scale from their real dimensions. Click one to open it. */
+function Boxes({
+  placed,
+  contents,
+  openId,
+  visible,
+  onToggle,
+}: {
+  placed: PlacedBox[];
+  contents: Map<string, Item[]>;
+  openId: string | null;
+  visible: boolean;
+  onToggle: (id: string) => void;
+}) {
+  if (placed.length === 0) return null;
+  return (
+    <g>
+      {placed.map((p) => (
+        <Luggage
+          key={p.c.id}
+          p={p}
+          items={contents.get(p.c.id) ?? []}
+          open={openId === p.c.id || (!!p.column && openId === `stack:${p.column[0]}`)}
+          visible={visible}
+          onToggle={onToggle}
+        />
+      ))}
+    </g>
+  );
+}
+
+function Luggage({
+  p,
+  items,
+  open,
+  visible,
+  onToggle,
+  decor = false,
+}: {
+  p: PlacedBox;
+  items: Item[];
+  open: boolean;
+  visible: boolean;
+  onToggle?: (id: string) => void;
+  /** A look-alike drawn above the backdrop: no button, not read out. */
+  decor?: boolean;
+}) {
+  const { c, left, w, h, base } = p;
   const color = containerColor(c);
   const top = base - h;
   const card = c.type === "Cardboard box";
+  const bag = c.type === "Bag";
+  const pack = c.type === "Backpack";
+  const wallet = c.type === "Wallet";
+  const accent = containerAccent(c);
+  const slots = peekSlots(peekCount(w, items.length), left, w);
+  const peeking = peekPicks(items, slots.length);
+  const flap = mix(color, "#ffffff", 0.18);
+  const stacked = !!p.column && items.length === 0;
+  const toggle = () => onToggle?.(stacked && p.column ? `stack:${p.column[0]}` : c.id);
+  const has = items.length > 0;
+  const live = (has || stacked) && !decor;
   return (
-    <g>
-      <title>{c.name}</title>
-      <rect x={left} y={top} width={w} height={h} rx={card ? 4 : 12} fill={color} stroke="rgba(0,0,0,0.35)" strokeWidth="2" />
+    <g
+      className={`box${live ? " is-live" : ""}${open ? " is-open" : ""}`}
+      role={live ? "button" : undefined}
+      tabIndex={live && visible ? 0 : undefined}
+      aria-expanded={live ? open : undefined}
+      aria-label={
+        live
+          ? stacked
+            ? `${c.name}, in a stack of ${p.column?.length}. Press to stand them up and tell them apart`
+            : `${c.name}, ${items.length} ${items.length === 1 ? "item" : "items"}`
+          : undefined
+      }
+      aria-hidden={decor || undefined}
+      pointerEvents={decor ? "none" : undefined}
+      onClick={
+        live
+          ? (e) => {
+              e.stopPropagation();
+              toggle();
+            }
+          : undefined
+      }
+      onKeyDown={live ? (e) => onKey(e, toggle) : undefined}
+    >
+      {!decor && <title>{stacked ? `${c.name} (stack of ${p.column?.length}: click to line them up)` : c.name}</title>}
+      {card && (
+        <>
+          <path d={`M${left} ${top}l-9-15 ${w * 0.3 + 9}-2v17Z`} fill={flap} stroke="rgba(0,0,0,0.35)" strokeWidth="2" strokeLinejoin="round" />
+          <path d={`M${left + w} ${top}l9-15-${w * 0.3 + 9}-2v17Z`} fill={flap} stroke="rgba(0,0,0,0.35)" strokeWidth="2" strokeLinejoin="round" />
+        </>
+      )}
+      {/* Behind the body, so only the top of each item shows above the opening. */}
+      <g className="box__peek">
+        {peeking.map((it, i) => (
+          <g key={it.id} transform={`translate(${slots[i].x} ${top - slots[i].rise + 4}) rotate(${slots[i].rot})`}>
+            <ItemArt spec={artOf(it)} size={52} />
+          </g>
+        ))}
+      </g>
+      {bag && (
+        <>
+          <path d={`M${left + w * 0.28} ${top}Q${left + w * 0.35} ${top - 24} ${left + w * 0.42} ${top}M${left + w * 0.58} ${top}Q${left + w * 0.65} ${top - 24} ${left + w * 0.72} ${top}`} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="9" strokeLinecap="round" />
+          <path d={`M${left + w * 0.28} ${top}Q${left + w * 0.35} ${top - 24} ${left + w * 0.42} ${top}M${left + w * 0.58} ${top}Q${left + w * 0.65} ${top - 24} ${left + w * 0.72} ${top}`} fill="none" stroke={accent ?? mix(color, "#ffffff", 0.3)} strokeWidth="5" strokeLinecap="round" />
+        </>
+      )}
+      <rect x={left} y={top} width={w} height={h} rx={card ? 4 : bag ? h * 0.4 : pack ? w * 0.28 : wallet ? 6 : 12} fill={color} stroke="rgba(0,0,0,0.35)" strokeWidth="2" />
       {card ? (
         <>
           <rect x={left + w / 2 - 10} y={top} width={20} height={h * 0.38} fill="rgba(255,255,255,0.28)" />
           <path d={`M${left} ${top + 8}h${w}`} stroke="rgba(0,0,0,0.25)" strokeWidth="2" />
+        </>
+      ) : bag ? (
+        <>
+          {/* A gym bag: side panels and a zipper along the top in the trim color. */}
+          <rect x={left + w * 0.1} y={top + 2} width={w * 0.07} height={h - 4} fill={accent ?? "rgba(255,255,255,0.28)"} />
+          <rect x={left + w * 0.83} y={top + 2} width={w * 0.07} height={h - 4} fill={accent ?? "rgba(255,255,255,0.28)"} />
+          <path d={`M${left + w * 0.17} ${top + 8}H${left + w * 0.83}`} stroke={accent ?? "rgba(255,255,255,0.4)"} strokeWidth="3" strokeDasharray="4 3" />
+          <rect x={left + w * 0.34} y={top + h * 0.45} width={w * 0.32} height={h * 0.38} rx={4} fill="none" stroke={accent ?? "rgba(255,255,255,0.3)"} strokeWidth="3" />
+        </>
+      ) : wallet ? (
+        <>
+          {/* A bifold wallet: stitched edge, a flap line and a corner of card showing. */}
+          <rect x={left + 4} y={top + 4} width={w - 8} height={h - 8} rx={4} fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1.6" strokeDasharray="3 2.5" />
+          <path d={`M${left} ${top + h * 0.35}H${left + w}`} stroke="rgba(0,0,0,0.3)" strokeWidth="2" />
+          <rect x={left + w * 0.68} y={top - 5} width={w * 0.2} height={8} rx={1.5} fill="#e8eef5" stroke="rgba(0,0,0,0.35)" strokeWidth="1.5" />
+        </>
+      ) : pack ? (
+        <>
+          {/* A backpack: a grab loop on top, a big front pocket with a zipper, and shoulder straps down the sides. */}
+          <path d={`M${left + w * 0.4} ${top}v-9h${w * 0.2}v9`} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x={left + w * 0.12} y={top + h * 0.5} width={w * 0.76} height={h * 0.42} rx={w * 0.12} fill="rgba(0,0,0,0.18)" stroke="rgba(0,0,0,0.3)" strokeWidth="2" />
+          <path d={`M${left + w * 0.22} ${top + h * 0.6}H${left + w * 0.78}`} stroke="rgba(255,255,255,0.45)" strokeWidth="3" strokeDasharray="4 3" />
+          <path d={`M${left + w * 0.1} ${top + h * 0.12}V${top + h * 0.7}M${left + w * 0.9} ${top + h * 0.12}V${top + h * 0.7}`} stroke="rgba(0,0,0,0.3)" strokeWidth="5" strokeLinecap="round" />
+        </>
+      ) : p.lying ? (
+        <>
+          {/* A case on its back: handle on the end, ribs running the long way. */}
+          <path d={`M${left + w} ${top + h * 0.3}h9v${h * 0.4}h-9`} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={`M${left + 14} ${top + h * 0.33}h${w - 28}M${left + 14} ${top + h * 0.67}h${w - 28}`} stroke="rgba(255,255,255,0.22)" strokeWidth="4" strokeLinecap="round" />
         </>
       ) : (
         <>
@@ -366,6 +760,115 @@ function Luggage({ c, left, base, w, h }: { c: Container; left: number; base: nu
           <path d={`M${left + w * 0.3} ${top + 14}v${h - 28}M${left + w * 0.7} ${top + 14}v${h - 28}`} stroke="rgba(255,255,255,0.22)" strokeWidth="5" strokeLinecap="round" />
         </>
       )}
+      {/* The inside of the opening: a darker rim along the top edge. */}
+      {has && <rect x={left + 3} y={top + 2} width={w - 6} height={6} rx={3} fill="rgba(0,0,0,0.3)" />}
+      {live && has && (
+        <>
+          <circle className="tile__badge" cx={left + w - 2} cy={top + 2} r={13} />
+          <text className="tile__count" x={left + w - 2} y={top + 6.5}>
+            {items.length}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
+
+/** A name under a container: split in two at the space nearest the middle when it is long. */
+function LineupLabel({ name, x, y, room }: { name: string; x: number; y: number; room: number }) {
+  const words = name.split(" ");
+  let lines = [name];
+  if (name.length > 11 && words.length > 1) {
+    let best = 1;
+    for (let i = 1; i < words.length; i++) {
+      if (Math.abs(words.slice(0, i).join(" ").length - name.length / 2) < Math.abs(words.slice(0, best).join(" ").length - name.length / 2)) best = i;
+    }
+    lines = [words.slice(0, best).join(" "), words.slice(best).join(" ")];
+  }
+  const longest = Math.max(...lines.map((l) => l.length));
+  const size = Math.max(10, Math.min(22, room / (longest * 0.78)));
+  return (
+    <text className="scene__label" x={x} y={y} style={{ fontSize: size }}>
+      {lines.map((l, i) => (
+        <tspan key={i} x={x} dy={i === 0 ? 0 : size * 1.15}>
+          {l}
+        </tspan>
+      ))}
+    </text>
+  );
+}
+
+/** A stack stood up in a row over a dark backdrop, each container with its name under it. */
+function Lineup({ plan, visible }: { plan: LineupPlan; visible: boolean }) {
+  return (
+    <g className="burst">
+      <rect className="burst__veil" x={-4000} y={-4000} width={9200} height={9200} />
+      {plan.boxes.map((p) => (
+        <g key={p.c.id} className="burst__item" style={{ "--x": "0px", "--y": "0px", "--r": "0deg", "--d": "0s" } as CSSProperties}>
+          <Luggage p={p} items={[]} open visible={visible} decor />
+          {/* The name sits under its own container, on two lines when it is long, sized to fit. */}
+          <LineupLabel name={p.c.name} x={p.left + p.w / 2} y={p.base + 36} room={p.w + 30} />
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/**
+ * All of an open container's items, fanned out above it over a dark backdrop. The camera has
+ * zoomed to fit them (see burstPlan).
+ */
+function Burst({
+  box,
+  items,
+  showBox,
+  plan,
+  visible,
+  onPickItem,
+}: {
+  box: PlacedBox;
+  items: Item[];
+  /** Draw the container's look-alike under the items (not for a loose pile). */
+  showBox: boolean;
+  plan: BurstPlan;
+  visible: boolean;
+  onPickItem: (i: Item) => void;
+}) {
+  const { slots, anchorX, anchorY } = plan;
+  const style = (i: number) =>
+    ({
+      "--x": `${slots[i].x}px`,
+      "--y": `${slots[i].y}px`,
+      "--r": `${slots[i].rot}deg`,
+      "--d": `${slots[i].delay}s`,
+    }) as CSSProperties;
+  return (
+    <g className="burst">
+      {/* Dims the room; a click on it falls through to the scene and closes the container. */}
+      <rect className="burst__veil" x={-4000} y={-4000} width={9200} height={9200} />
+      {showBox && <Luggage p={box} items={items} open visible={visible} decor />}
+      <g transform={`translate(${anchorX} ${anchorY})`}>
+      {items.map((it, i) => (
+        <g
+          key={it.id}
+          className="burst__item"
+          style={style(i)}
+          role="button"
+          tabIndex={visible ? 0 : -1}
+          aria-label={it.name}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPickItem(it);
+          }}
+          onKeyDown={(e) => onKey(e, () => onPickItem(it))}
+        >
+          <title>{it.name}</title>
+          <g className="burst__art">
+            <ItemArt spec={artOf(it)} size={BURST_ITEM} />
+          </g>
+        </g>
+      ))}
+      </g>
     </g>
   );
 }
@@ -377,14 +880,21 @@ interface Tones {
   dark: string;
 }
 
+/**
+ * A plain table with no drawers, seen from well above so the top is a deep slab tilted toward
+ * us: narrow and high at the back, wide and low at the front, with room for rows of things.
+ */
 function Desk({ x, light, mid, dark }: Tones): ReactNode {
   return (
     <g>
-      <rect x={x - 190} y={400} width={16} height={BASE_Y - 400} fill={dark} />
-      <rect x={x + 174} y={400} width={16} height={BASE_Y - 400} fill={dark} />
-      <rect x={x + 30} y={420} width={144} height={78} fill={mid} />
-      <path d={`M${x + 80} ${459}h44`} stroke={dark} strokeWidth="6" strokeLinecap="round" />
-      <rect x={x - 200} y={398} width={400} height={22} rx={5} fill={light} />
+      {/* Legs: the back pair set in and higher, the front pair under the near edge. */}
+      <rect x={x - 130} y={280} width={11} height={BASE_Y - 280 - 70} fill={dark} opacity={0.65} />
+      <rect x={x + 119} y={280} width={11} height={BASE_Y - 280 - 70} fill={dark} opacity={0.65} />
+      <rect x={x - 192} y={414} width={16} height={BASE_Y - 414} fill={dark} />
+      <rect x={x + 176} y={414} width={16} height={BASE_Y - 414} fill={dark} />
+      <polygon points={`${x - 118},268 ${x + 118},268 ${x + 208},402 ${x - 208},402`} fill={light} />
+      <path d={`M${x - 132} 306H${x + 132}M${x - 158} 341H${x + 158}M${x - 184} 375H${x + 184}`} stroke={mid} strokeWidth="2" opacity="0.45" />
+      <rect x={x - 208} y={402} width={416} height={16} rx={4} fill={mid} />
     </g>
   );
 }

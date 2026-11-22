@@ -1,10 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useState, useTransition } from "react";
 import { login, logout, type LoginState } from "@/app/actions/auth";
+import { refreshInventory } from "@/app/actions/inventory";
 
 export function LoginPanel({ isPrivate }: { isPrivate: boolean }) {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
   const [state, action, pending] = useActionState<LoginState | undefined, FormData>(
     login,
     undefined,
@@ -14,6 +18,19 @@ export function LoginPanel({ isPrivate }: { isPrivate: boolean }) {
     return (
       <form action={logout} className="auth">
         <span className="auth__badge">Private view</span>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          disabled={refreshing}
+          onClick={() =>
+            startRefresh(async () => {
+              await refreshInventory();
+              router.refresh();
+            })
+          }
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
         <button type="submit" className="btn btn--ghost">
           Log out
         </button>

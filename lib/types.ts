@@ -21,6 +21,12 @@ export interface Item {
   notes: string;
   locationId: string | null;
   boxId: string | null;
+  /** Shirt, shorts, shoes... as filed in Notion; sharpens how the item is drawn. */
+  clothesType: string | null;
+  /** A color word that overrides the one guessed from the name. */
+  color: string | null;
+  /** Image of the cover, for books. */
+  cover: string | null;
 }
 
 export interface Container {
@@ -33,24 +39,13 @@ export interface Container {
   heightCm: number | null;
   lengthCm: number | null;
   volumeL: number | null;
+  /** Has things inside that are not listed yet, so it is not drawn as an empty one. */
+  filled: boolean;
   locationId: string | null;
-}
-
-/** One line of the packing list; points at the real item it stands for. */
-export interface LuggageEntry {
-  id: string;
-  name: string;
-  group: string | null;
-  packed: boolean;
-  /** The Packing Inventory row. No link means the entry can't be shown to visitors. */
-  itemId: string | null;
-  /** The entry this one goes with (a charger goes with its laptop). */
-  parentId: string | null;
 }
 
 export interface Inventory {
   places: Place[];
   items: Item[];
   containers: Container[];
-  luggage: LuggageEntry[];
 }

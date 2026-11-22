@@ -1,16 +1,18 @@
 import "server-only";
 import { Client } from "@notionhq/client";
-import { cacheLife } from "next/cache";
+import { cacheLife, cacheTag } from "next/cache";
 import { demoInventory } from "./demo-data";
 import type {
   Container,
   Inventory,
   Item,
   Level,
-  LuggageEntry,
   Place,
   SceneKey,
 } from "./types";
+
+/** Cache tag a write must expire so the owner sees their own change. */
+export const INVENTORY_TAG = "inventory";
 
 interface RawProp {
   type: string;
@@ -21,6 +23,7 @@ interface RawProp {
   number?: number | null;
   checkbox?: boolean;
   relation?: { id: string }[];
+  url?: string | null;
   formula?: { type: string; number?: number | null };
 }
 
@@ -72,6 +75,7 @@ function requireEnv(name: string): string {
 export async function getInventory(): Promise<Inventory> {
   "use cache";
   cacheLife("minutes");
+  cacheTag(INVENTORY_TAG);
 
   if (!process.env.NOTION_TOKEN) {
     if (process.env.NODE_ENV === "production") {
@@ -80,12 +84,10 @@ export async function getInventory(): Promise<Inventory> {
     return demoInventory;
   }
 
-  const luggageDs = process.env.NOTION_LUGGAGE_DS;
-  const [locationPages, itemPages, boxPages, luggagePages] = await Promise.all([
+  const [locationPages, itemPages, boxPages] = await Promise.all([
     queryAll(requireEnv("NOTION_LOCATIONS_DS")),
     queryAll(requireEnv("NOTION_ITEMS_DS")),
     queryAll(requireEnv("NOTION_BOXES_DS")),
-    luggageDs ? queryAll(luggageDs) : Promise.resolve([]),
   ]);
 
   const places: Place[] = locationPages.map((p) => ({
@@ -107,6 +109,9 @@ export async function getInventory(): Promise<Inventory> {
     notes: text(p.properties.Notes),
     locationId: firstRelation(p.properties.Location),
     boxId: firstRelation(p.properties.Box),
+    clothesType: select(p.properties["Clothes type"]),
+    color: text(p.properties.Color).trim() || null,
+    cover: p.properties.Cover?.url || null,
   }));
 
   const containers: Container[] = boxPages.map((p) => ({
@@ -119,17 +124,9 @@ export async function getInventory(): Promise<Inventory> {
     heightCm: num(p.properties["Height (cm)"]),
     lengthCm: num(p.properties["Length (cm)"]),
     volumeL: p.properties["Volume (L)"]?.formula?.number ?? null,
+    filled: p.properties["Has contents"]?.checkbox ?? false,
     locationId: firstRelation(p.properties.Location),
   }));
 
-  const luggage: LuggageEntry[] = luggagePages.map((p) => ({
-    id: p.id,
-    name: text(p.properties.Entry),
-    group: select(p.properties.Group),
-    packed: p.properties.Packed?.checkbox ?? false,
-    itemId: firstRelation(p.properties.Item),
-    parentId: firstRelation(p.properties["Goes with"]),
-  }));
-
-  return { places, items, containers, luggage };
+  return { places, items, containers };
 }

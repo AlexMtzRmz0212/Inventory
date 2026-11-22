@@ -134,6 +134,11 @@ input {
   opacity: 1;
   pointer-events: auto;
 }
+/* Once you are inside a place, its own pin (and its parents') is out of the way. */
+.map[data-zoom] .pin.is-here {
+  opacity: 0;
+  pointer-events: none;
+}
 .stage[data-flying="true"] .map .pin {
   pointer-events: none;
 }
@@ -252,6 +257,80 @@ input {
   font: 700 13px var(--font-body);
   fill: var(--deep);
   text-anchor: middle;
+}
+
+/* Luggage and boxes: a few items stick out of the top; click to let them all out */
+.box.is-live {
+  cursor: pointer;
+  outline: none;
+}
+.box.is-live:hover,
+.box.is-live:focus-visible {
+  filter: brightness(1.14);
+}
+.box__peek {
+  transition: opacity 0.2s;
+}
+.box.is-open .box__peek {
+  opacity: 0;
+}
+.burst__item {
+  cursor: pointer;
+  outline: none;
+  transform: translate(var(--x), var(--y)) rotate(var(--r));
+  animation: pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) var(--d) both;
+}
+.rack__label {
+  font: 600 13px var(--font-body);
+  fill: var(--chalk-dim);
+}
+.rack__item {
+  cursor: pointer;
+  outline: none;
+}
+.rack__item:hover,
+.rack__item:focus-visible {
+  filter: brightness(1.25) drop-shadow(0 0 4px rgba(255, 255, 255, 0.5));
+}
+.burst__art {
+  transition: transform 0.15s;
+}
+.burst__item:hover .burst__art,
+.burst__item:focus-visible .burst__art {
+  transform: scale(1.22);
+}
+.burst__veil {
+  fill: var(--deep);
+  opacity: 0.94;
+  animation: veil 0.35s both;
+}
+@keyframes veil {
+  from {
+    opacity: 0;
+  }
+}
+/* Sits just above the tray, so a way out is always in view while the items fill the room. */
+.scene__close {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--tray-h, 0px) + 14px);
+  transform: translateX(-50%);
+}
+@keyframes pop {
+  from {
+    transform: translate(0, 0) rotate(0deg) scale(0.2);
+    opacity: 0;
+  }
+  to {
+    transform: translate(var(--x), var(--y)) rotate(var(--r)) scale(1);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .burst__item,
+  .burst__veil {
+    animation: none;
+  }
 }
 .scene__pop {
   position: absolute;
@@ -449,186 +528,10 @@ input {
   align-items: flex-start;
   gap: 10px;
 }
-.pack-btn {
+.topbar-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-.pack-btn__count {
-  color: var(--marigold);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Luggage list: what goes in the bags, and where each thing is right now */
-.pack {
-  position: absolute;
-  top: 64px;
-  right: 16px;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  width: min(380px, calc(100% - 32px));
-  max-height: calc(100% - 80px);
-  background: var(--deep);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  overflow: hidden;
-}
-.pack__head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.pack__head h2 {
-  margin: 0;
-  font: 600 17px var(--font-display);
-}
-.pack__head p {
-  margin: 2px 0 0;
-  color: var(--chalk-dim);
-  font-size: 13px;
-}
-.pack__close {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  margin-left: auto;
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--chalk-dim);
-  cursor: pointer;
-}
-.pack__close:hover {
-  color: var(--chalk);
-  border-color: var(--marigold);
-}
-.pack__body {
-  padding: 4px 16px 16px;
-  overflow-y: auto;
-}
-.pack__group {
-  --c: #9aa7b5;
-  margin-top: 16px;
-}
-.pack__group h3 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--chalk);
-  font: 600 13px var(--font-display);
-}
-.pack__group h3 .pack__icon {
-  color: var(--c);
-}
-.pack__count {
-  margin-left: auto;
-  color: var(--chalk-dim);
-  font: 600 12px var(--font-body);
-  font-variant-numeric: tabular-nums;
-}
-.pack__bar {
-  display: block;
-  height: 3px;
-  margin: 8px 0 4px;
-  border-radius: 2px;
-  background: var(--line);
-  position: relative;
-}
-.pack__bar::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--w, 0%);
-  border-radius: 2px;
-  background: var(--c);
-}
-.pack__list {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.pack__row--nested {
-  margin-left: 22px;
-  border-left: 1px solid var(--line);
-  padding-left: 8px;
-}
-.pack__line {
-  --c: #9aa7b5;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 38px;
-}
-.pack__icon {
-  display: inline-flex;
-  color: var(--c);
-}
-.pack__name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.pack__where {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  max-width: 45%;
-  padding: 4px 10px;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--chalk-dim);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.pack__where:hover {
-  color: var(--chalk);
-  border-color: var(--marigold);
-}
-.check {
-  flex: none;
-}
-.check__ring {
-  fill: none;
-  stroke: rgba(234, 240, 244, 0.35);
-  stroke-width: 1.6;
-}
-.check.is-on .check__ring {
-  fill: var(--marigold);
-  stroke: var(--marigold);
-}
-.check__tick {
-  fill: none;
-  stroke: var(--deep);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.ring {
-  flex: none;
-}
-.ring__track {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 3;
-}
-.ring__bar {
-  fill: none;
-  stroke: var(--marigold);
-  stroke-width: 3;
-  stroke-linecap: round;
-}
-.ring__text {
-  font: 700 8px var(--font-body);
-  fill: var(--chalk);
-  text-anchor: middle;
 }
 
 /* Tray: what is at the place you are looking at */
@@ -749,9 +652,6 @@ input {
   .topbar .btn {
     padding: 7px 12px;
     font-size: 13.5px;
-  }
-  .pack-btn__label {
-    display: none;
   }
   .tourbar {
     top: auto;
