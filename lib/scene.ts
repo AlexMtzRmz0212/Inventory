@@ -1,4 +1,4 @@
-import { groupedItems } from "./item-art";
+import { artKind, groupedItems, type ArtKind } from "./item-art";
 import type { Container, Inventory, Item } from "./types";
 
 /** Scene coordinates: a flat front-on room, 1200 wide. */
@@ -11,13 +11,14 @@ export const BASE_Y = 570;
 export const FLOOR_BOX_Y = 640;
 export const FLOOR_ITEMS_Y = 676;
 
-export type Furniture = "desk" | "closet" | "shelf" | "crate";
+export type Furniture = "desk" | "closet" | "shelf" | "crate" | "couch";
 
 export function furnitureKind(name: string): Furniture {
   const n = name.toLowerCase();
   if (/desk|table/.test(n)) return "desk";
   if (/closet|wardrobe|cabinet/.test(n)) return "closet";
   if (/shelf|shelves|rack/.test(n)) return "shelf";
+  if (/couch|sofa/.test(n)) return "couch";
   return "crate";
 }
 
@@ -26,6 +27,7 @@ export const FURNITURE_WIDTH: Record<Furniture, number> = {
   closet: 260,
   shelf: 300,
   crate: 220,
+  couch: 340,
 };
 
 /**
@@ -60,6 +62,12 @@ export function mix(a: string, b: string, t: number): string {
   return `#${c(ar, br)}${c(ag, bg)}${c(ab, bb)}`;
 }
 
+/** Light enough that white details on it would vanish. */
+export function isPale(hex: string): boolean {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.72;
+}
+
 const CONTAINER_COLORS: Record<string, string> = {
   Teal: "#2fbfb0",
   Black: "#2c323c",
@@ -79,8 +87,8 @@ export function containerAccent(c: Container): string | null {
   return c.color === "Navy & gold" ? "#e0b13c" : null;
 }
 
-/** Bags and boxes lie flat; suitcases stand up. */
-export const liesFlat = (c: Container) => c.type === "Cardboard box" || c.type === "Bag";
+/** Bags, boxes and pouches lie flat; suitcases stand up. */
+export const liesFlat = (c: Container) => c.type === "Cardboard box" || c.type === "Bag" || c.type === "Pouch";
 
 /** Drawn size in scene units; suitcases stand up, bags and boxes sit flat (and so does any case laid down). */
 export function containerSize(c: Container, scale: number, lying = false): { w: number; h: number } {
@@ -368,7 +376,7 @@ function frameFor(slots: BurstSlot[], anchorX: number, anchorY: number, aspect: 
 export function burstPlan(box: PlacedBox, n: number, aspect: number): BurstPlan {
   const anchorX = box.left + box.w / 2;
   // Above the handle on suitcases, which stands 12 above the top edge.
-  const anchorY = box.base - box.h - (box.c.type === "Cardboard box" ? 10 : box.c.type === "Bag" ? 20 : box.c.type === "Backpack" ? 16 : box.c.type === "Suitcase" ? 22 : 0);
+  const anchorY = box.base - box.h - (box.c.type === "Cardboard box" ? 10 : box.c.type === "Bag" ? 20 : box.c.type === "Backpack" ? 16 : box.c.type === "Suitcase" ? 22 : box.c.type === "Pouch" ? 10 : 0);
 
   let best: { slots: BurstSlot[]; frame: BurstPlan["frame"] } | null = null;
   for (let cols = 1; cols <= Math.min(BURST_MAX_COLS, Math.max(n, 1)); cols++) {
@@ -407,4 +415,125 @@ export function lineupPlan(cs: Container[], cx: number, base: number, aspect: nu
   const w = Math.max(300, (R - L) / 0.96, ((B - T) / (0.86 * 0.96)) * aspect);
   const h = w / aspect;
   return { boxes, frame: { cx: (L + R) / 2, cy: (T + B) / 2 + (0.5 - 0.55) * h, w } };
+}
+
+/** Something that has been given a place on the table. */
+export const hasTableSpot = (x: { tableX: number | null; tableY: number | null }) =>
+  x.tableX !== null && x.tableY !== null;
+
+/**
+ * A point on the desk top, which Desk draws as a slab narrow at the back and wide at the front.
+ * `u` runs 0 to 1 from the left edge to the right, `v` from the back edge to the front. Gives where
+ * a thing stands there, and how much smaller it looks for being farther away.
+ */
+/** A work desk (an office desk) is longer than a table. */
+export const deskWidth = (name: string) => (/office/i.test(name) ? 1.25 : 1);
+
+export function deskPoint(u: number, v: number, cx: number, wide = 1): { x: number; y: number; scale: number } {
+  const y = 276 + v * (398 - 276);
+  // The slab runs from 160 either side of center at its back edge (y 252) to 208 at its front (y 402).
+  const half = 160 + (48 * (y - 252)) / 150;
+  return { x: cx + (u - 0.5) * 2 * half * wide * 0.9, y, scale: 0.66 + 0.34 * v };
+}
+
+const DESK_ITEM = 34;
+/** Screens and keyboards are drawn bigger than a mouse or a cable, as they are in life. */
+const DESK_SIZE: Partial<Record<ArtKind, number>> = {
+  tv: 2.8,
+  monitor: 2.4,
+  laptop: 2.6,
+  keyboard: 1.5,
+  tablet: 1.2,
+  lamp: 1.2,
+  console: 1.2,
+  coolbase: 1.2,
+};
+const BIG_KINDS = new Set<ArtKind>(["tv", "monitor", "laptop"]);
+/** Scene units per centimeter for containers on the desk: a wallet is drawn smaller than a pouch. */
+const DESK_CM: Record<string, number> = { Wallet: 3, Pouch: 3.4 };
+
+
+/** Least gap, in scene units, kept between two things on the desk. */
+const DESK_GAP = 4;
+
+/**
+ * Lays out what is on a desk where its owner put it. Things with a table position go there. The
+ * rest are spread over the free part of the table, each one set where it is farthest from
+ * everything else, so nothing sits on top of anything. When the table is too crowded for things
+ * at their size, everything is drawn a little smaller until it fits. Containers without a
+ * position line up along the front.
+ */
+export function deskLayout(
+  items: Item[],
+  boxes: Container[],
+  cx: number,
+  wide = 1,
+): { items: PlacedItem[]; boxes: PlacedBox[] } {
+  const loose = groupedItems(items.filter((i) => !hasTableSpot(i)));
+  // Candidate spots: a fine grid over the table, away from the very edges.
+  const grid: [number, number][] = [];
+  for (let v = 0.2; v <= 0.94; v += 0.05) for (let u = 0.07; u <= 0.93; u += 0.04) grid.push([u, v]);
+
+  const attempt = (m: number, force: boolean) => {
+    const taken: { x: number; y: number; r: number }[] = [];
+    const placedBoxes: PlacedBox[] = [];
+    let spare = 0;
+    for (const c of boxes) {
+      const [u, v] = hasTableSpot(c) ? [(c.tableX ?? 0) / 100, (c.tableY ?? 0) / 100] : [0.14 + 0.15 * spare++, 0.86];
+      const p = deskPoint(u, v, cx, wide);
+      const { w, h } = containerSize(c, (DESK_CM[c.type ?? ""] ?? 3) * p.scale * m);
+      placedBoxes.push({ c, left: p.x - w / 2, w, h, base: p.y });
+      // Room above as well, for the things sticking out of it.
+      taken.push({ x: p.x, y: p.y - h / 2 - 8, r: Math.max(w, h) / 2 + 8 });
+    }
+
+    const placed: PlacedItem[] = [];
+    // Screens and laptops keep their big size however crowded the desk gets: they may stick out past the table.
+    const sizeAt = (item: Item, v: number) => {
+      const kind = artKind(item);
+      return DESK_ITEM * (BIG_KINDS.has(kind) ? 1 : m) * (DESK_SIZE[kind] ?? 1) * deskPoint(0, v, cx, wide).scale;
+    };
+    const put = (item: Item, u: number, v: number) => {
+      const p = deskPoint(u, v, cx, wide);
+      const size = sizeAt(item, v);
+      placed.push({ item, x: p.x, y: p.y - size / 2, size });
+      taken.push({ x: p.x, y: p.y - size / 2, r: size / 2 });
+    };
+    for (const i of items.filter(hasTableSpot)) {
+      if ((i.tableY ?? 0) > 100) {
+        // A Table Y past 100 is on the floor under the desk, between its front legs.
+        // Up close under the desk, so about twice a tabletop thing's size.
+        const size = DESK_ITEM * (DESK_SIZE[artKind(i)] ?? 1) * 1.6;
+        placed.push({ item: i, x: deskPoint((i.tableX ?? 50) / 100, 1, cx, wide).x, y: 472 - size / 2, size });
+      } else {
+        put(i, (i.tableX ?? 0) / 100, (i.tableY ?? 0) / 100);
+      }
+    }
+
+    for (const item of loose) {
+      let best: [number, number] | null = null;
+      let bestGap = -Infinity;
+      for (const [u, v] of grid) {
+        const p = deskPoint(u, v, cx, wide);
+        const r = sizeAt(item, v) / 2;
+        // The gap to the nearest thing: how far apart the two are, less their sizes.
+        let gap = Infinity;
+        for (const t of taken) gap = Math.min(gap, Math.hypot(t.x - p.x, (t.y - (p.y - r)) * 1.3) - (t.r + r));
+        if (gap > bestGap) {
+          bestGap = gap;
+          best = [u, v];
+        }
+      }
+      if (!force && bestGap < DESK_GAP) return null;
+      put(item, ...(best ?? [0.5, 0.5]));
+    }
+    // Back to front, so nearer things overlap the ones behind them.
+    return { items: placed.sort((a, b) => a.y + a.size / 2 - (b.y + b.size / 2)), boxes: placedBoxes };
+  };
+
+  for (let m = 1; m > 0.5; m -= 0.05) {
+    const done = attempt(m, false);
+    if (done) return done;
+  }
+  return attempt(0.5, true) as { items: PlacedItem[]; boxes: PlacedBox[] };
 }

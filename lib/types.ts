@@ -27,6 +27,10 @@ export interface Item {
   color: string | null;
   /** Image of the cover, for books. */
   cover: string | null;
+  /** Where it sits on a table: 0 is the left edge, 100 the right. Empty means wherever there is room. */
+  tableX: number | null;
+  /** Where it sits on a table: 0 is the back edge, 100 the front. */
+  tableY: number | null;
 }
 
 export interface Container {
@@ -42,6 +46,9 @@ export interface Container {
   /** Has things inside that are not listed yet, so it is not drawn as an empty one. */
   filled: boolean;
   locationId: string | null;
+  /** Where it sits on a table, as for items. */
+  tableX: number | null;
+  tableY: number | null;
 }
 
 export interface Inventory {

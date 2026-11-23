@@ -112,6 +112,8 @@ export async function getInventory(): Promise<Inventory> {
     clothesType: select(p.properties["Clothes type"]),
     color: text(p.properties.Color).trim() || null,
     cover: p.properties.Cover?.url || null,
+    tableX: num(p.properties["Table X"]),
+    tableY: num(p.properties["Table Y"]),
   }));
 
   const containers: Container[] = boxPages.map((p) => ({
@@ -126,6 +128,8 @@ export async function getInventory(): Promise<Inventory> {
     volumeL: p.properties["Volume (L)"]?.formula?.number ?? null,
     filled: p.properties["Has contents"]?.checkbox ?? false,
     locationId: firstRelation(p.properties.Location),
+    tableX: num(p.properties["Table X"]),
+    tableY: num(p.properties["Table Y"]),
   }));
 
   return { places, items, containers };

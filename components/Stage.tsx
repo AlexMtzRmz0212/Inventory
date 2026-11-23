@@ -11,17 +11,17 @@ import {
   lerp,
   peakWidth,
   travelTier,
-  WORLD_CAM,
   type Cam,
 } from "@/lib/camera";
 import type { MapData } from "@/lib/map";
 import { categoryColor, DEFAULT_TINT, NEUTRAL_LAND } from "@/lib/palette";
-import { chainTo, countByCategory, indexPlaces, itemsIn } from "@/lib/places";
+import { chainTo, countByCategory, indexPlaces, itemsIn, type PlaceIndex } from "@/lib/places";
 import { buildTour } from "@/lib/tour";
 import type { Inventory, Level, Place } from "@/lib/types";
 import { CategoryIcon } from "./CategoryIcon";
 import { LoginPanel } from "./LoginPanel";
 import RoomScene from "./RoomScene";
+import { Search } from "./Search";
 import { useTour } from "./useTour";
 
 interface Props {
@@ -54,21 +54,72 @@ const PIN_ZOOMS: Record<Level, ZoomLevel[]> = {
 
 const EASE = [0.65, 0, 0.35, 1] as const;
 
+/** What the owner's own map opens on, so there is no world view to click through first. */
+const HOME_PLACE = "north america";
+
+/**
+ * A place with exactly one place inside it is not a choice, so going there goes on into it: USA
+ * with only Michigan opens Michigan, Canada with only Ottawa opens Ottawa. It stops at a site (the
+ * room itself) and wherever there are none or several places to pick from.
+ */
+function settleDown(idx: PlaceIndex, id: string | null): string | null {
+  let place = id ? idx.byId.get(id) : undefined;
+  while (place && place.level !== "Site" && place.level !== "Spot") {
+    const kids = idx.children.get(place.id) ?? [];
+    if (kids.length !== 1) break;
+    place = kids[0];
+  }
+  return place?.id ?? null;
+}
+
+/** Where going up from a place lands: the first place above it that has a choice to make. */
+function climbFrom(idx: PlaceIndex, id: string): string | null {
+  const parentOf = (p?: Place) => (p?.parentId ? idx.byId.get(p.parentId) : undefined);
+  let up = parentOf(idx.byId.get(id));
+  while (up && up.level !== "Site" && (idx.children.get(up.id)?.length ?? 0) === 1) up = parentOf(up);
+  return up?.id ?? null;
+}
+
+/** The camera's frame in the map's units, for a screen as wide as 16:9 until the real size is measured. */
+function viewBoxOf(c: Cam, aspect = 16 / 9): string {
+  const h = c.w / aspect;
+  return `${c.cx - c.w / 2} ${c.cy + h * 0.07 - h / 2} ${c.w} ${h}`;
+}
+
+/** Which pins and labels show at this camera width. */
+const zoomOfWidth = (w: number) =>
+  w >= 800 ? "world" : w >= 280 ? "continent" : w >= 100 ? "country" : w >= 30 ? "city" : "site";
+
 export default function Stage({ inventory, map, isPrivate }: Props) {
   const idx = useMemo(() => indexPlaces(inventory.places), [inventory.places]);
-  const [focusId, setFocusId] = useState<string | null>(null);
+  // The owner starts on their home continent; visitors, and an owner with no such place, on the world.
+  const [start] = useState(() => {
+    const home = isPrivate
+      ? inventory.places.find((p) => p.level === "Continent" && p.name.trim().toLowerCase() === HOME_PLACE)
+      : undefined;
+    const id = settleDown(idx, home?.id ?? null);
+    return { id, cam: camFor(id ? (idx.byId.get(id) ?? null) : null, map.positions, map.frames) };
+  });
+  const [focusId, setFocusId] = useState<string | null>(start.id);
   const [flying, setFlying] = useState(false);
+  /** The category whose list of items is open, and where the camera was when it opened. */
+  const [catMenu, setCatMenu] = useState<{ cat: string | null; at: string | null } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const menuOpen = catMenu !== null && catMenu.at === focusId;
   /** The room that is mounted; it stays mounted while fading out on the way to another place. */
-  const [sceneSiteId, setSceneSiteId] = useState<string | null>(null);
+  const [sceneSiteId, setSceneSiteId] = useState<string | null>(
+    () => chainTo(idx, start.id).find((p) => p.level === "Site")?.id ?? null,
+  );
 
   const stageRef = useRef<HTMLDivElement>(null);
   const trayRef = useRef<HTMLElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const routeRef = useRef<SVGPathElement>(null);
   const parcelRef = useRef<SVGGElement>(null);
-  const camRef = useRef<Cam>(WORLD_CAM);
+  const camRef = useRef<Cam>(start.cam);
   const aspectRef = useRef(16 / 9);
-  const focusRef = useRef<string | null>(null);
+  const focusRef = useRef<string | null>(start.id);
   const flightRef = useRef<{ stop: () => void } | null>(null);
 
   const apply = useCallback((c: Cam) => {
@@ -80,8 +131,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
     const cy = c.cy + h * 0.07;
     svg.setAttribute("viewBox", `${c.cx - c.w / 2} ${cy - h / 2} ${c.w} ${h}`);
     svg.style.setProperty("--s", String(c.w / 1000));
-    svg.dataset.zoom =
-      c.w >= 800 ? "world" : c.w >= 280 ? "continent" : c.w >= 100 ? "country" : c.w >= 30 ? "city" : "site";
+    svg.dataset.zoom = zoomOfWidth(c.w);
   }, []);
 
   useEffect(() => {
@@ -201,16 +251,19 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   const go = useCallback(
     (id: string | null) => {
       stopTour();
-      flyTo(id);
+      // Going up lands where asked; going down skips the places that offer no choice.
+      const here = focusRef.current;
+      const up = !!id && !!here && chainTo(idx, here).some((p) => p.id === id);
+      flyTo(up ? id : settleDown(idx, id));
     },
-    [stopTour, flyTo],
+    [stopTour, flyTo, idx],
   );
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const current = focusRef.current;
-      if (current) go(idx.byId.get(current)?.parentId ?? null);
+      if (current) go(climbFrom(idx, current));
       else stopTour();
     };
     window.addEventListener("keydown", onKey);
@@ -219,6 +272,40 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
       flightRef.current?.stop();
     };
   }, [go, stopTour, idx]);
+
+  // Ctrl+F (or Cmd+F) searches the inventory instead of the page.
+  useEffect(() => {
+    const onFind = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onFind);
+    return () => window.removeEventListener("keydown", onFind);
+  }, []);
+
+  // The category list closes on a click anywhere else, or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t && (menuRef.current?.contains(t) || t.closest(".cat"))) return;
+      setCatMenu(null);
+    };
+    const esc = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        setCatMenu(null);
+      }
+    };
+    document.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [menuOpen]);
 
   const focus = focusId ? (idx.byId.get(focusId) ?? null) : null;
   const zoom = zoomForLevel(focus?.level ?? null);
@@ -240,15 +327,13 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   );
 
   const trayItems = itemsIn(inventory, idx, focusId);
+  const menuItems = menuOpen ? trayItems.filter((i) => i.category === catMenu.cat) : [];
   const trayCats = countByCategory(trayItems);
   const trayMax = Math.max(1, ...trayCats.map((c) => c.count));
   const kids = focusId ? (idx.children.get(focusId) ?? []) : idx.roots;
-  // Neighbors let you hop sideways without climbing back up first.
-  const siblings = focus
-    ? (focus.parentId ? (idx.children.get(focus.parentId) ?? []) : idx.roots).filter(
-        (s) => s.id !== focus.id,
-      )
-    : [];
+  /** The other places at the same level as this one, for the path's hover menus. */
+  const siblingsOf = (p: Place): Place[] =>
+    (p.parentId ? (idx.children.get(p.parentId) ?? []) : idx.roots).filter((s) => s.id !== p.id);
 
   const onPinKey = (e: KeyboardEvent, id: string) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -262,9 +347,9 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
       <svg
         ref={svgRef}
         className="map"
-        viewBox="0 0 1000 500"
-        style={{ "--s": 1 } as CSSProperties}
-        data-zoom="world"
+        viewBox={viewBoxOf(start.cam)}
+        style={{ "--s": start.cam.w / 1000 } as CSSProperties}
+        data-zoom={zoomOfWidth(start.cam.w)}
         role="group"
         aria-label="Map of where my things are"
       >
@@ -282,13 +367,15 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
         <path ref={routeRef} className="route" d="" />
         <g className="pins">
           {pins.map(({ place, pos, total, segments }) => {
-            const visible = PIN_ZOOMS[place.level].includes(zoom);
+            // Only the places directly inside the one you are in (and, on the way there, the one you are heading to).
+            const off = !((place.parentId ?? null) === focusId || (flying && place.id === focusId));
+            const visible = PIN_ZOOMS[place.level].includes(zoom) && !off;
             const active = place.id === focusId;
             let offset = 0;
             return (
               <g
                 key={place.id}
-                className={`pin pin--${place.level.toLowerCase()}${active ? " is-active" : ""}${chain.some((c) => c.id === place.id) ? " is-here" : ""}`}
+                className={`pin pin--${place.level.toLowerCase()}${active ? " is-active" : ""}${!flying && chain.some((c) => c.id === place.id) ? " is-here" : ""}${off ? " pin--off" : ""}`}
                 transform={`translate(${pos[0]} ${pos[1]})`}
               >
                 <g
@@ -372,24 +459,51 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
                 World
               </button>
             </li>
-            {chain.map((p: Place) => (
-              <li key={p.id}>
-                <svg className="crumbs__sep" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                  <path d="m3 1 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-                <button
-                  type="button"
-                  className="crumb"
-                  aria-current={p.id === focusId ? "page" : undefined}
-                  onClick={() => go(p.id)}
-                >
-                  {p.name}
-                </button>
-              </li>
-            ))}
+            {chain.map((p: Place) => {
+              // Hovering a place in the path offers the other places beside it, one click away.
+              const others = siblingsOf(p);
+              return (
+                <li key={p.id} className={others.length > 0 ? "crumbs__has-menu" : undefined}>
+                  <svg className="crumbs__sep" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="m3 1 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                  <button
+                    type="button"
+                    className="crumb"
+                    aria-current={p.id === focusId ? "page" : undefined}
+                    onClick={() => go(p.id)}
+                  >
+                    {p.name}
+                    {others.length > 0 && (
+                      <svg className="crumb__caret" width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
+                        <path d="m1 2.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                      </svg>
+                    )}
+                  </button>
+                  {others.length > 0 && (
+                    <ul className="crumb__menu" aria-label={`Other places beside ${p.name}`}>
+                      {others.map((s) => (
+                        <li key={s.id}>
+                          <button type="button" className="crumb__opt" onClick={() => go(s.id)}>
+                            {s.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </nav>
         <div className="topbar__right">
+          <button type="button" className="btn btn--ghost topbar-btn" onClick={() => setSearchOpen(true)} title="Search (Ctrl F)">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              <path d="m9.2 9.2 3.3 3.3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            Search
+          </button>
           {!isPrivate && tour.status === "idle" && steps.length > 2 && (
             <button type="button" className="btn btn--ghost topbar-btn" onClick={tour.play}>
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -434,6 +548,35 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
         </div>
       )}
 
+      {searchOpen && (
+        <Search inventory={inventory} idx={idx} onGo={go} onClose={() => setSearchOpen(false)} />
+      )}
+
+      {menuOpen && (
+        <div ref={menuRef} className="catmenu" role="dialog" aria-label={`${catMenu.cat ?? "Other"}, ${menuItems.length} items`}>
+          <h2>
+            {catMenu.cat ?? "Other"} <span>{menuItems.length}</span>
+          </h2>
+          <ul>
+            {menuItems.map((i) => (
+              <li key={i.id}>
+                <button
+                  type="button"
+                  disabled={!i.locationId}
+                  onClick={() => {
+                    setCatMenu(null);
+                    if (i.locationId) go(i.locationId);
+                  }}
+                >
+                  <span>{i.name}</span>
+                  <small>{(i.locationId && idx.byId.get(i.locationId)?.name) || ""}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <section ref={trayRef} className="tray" aria-live="polite">
         <header className="tray__head">
           <h1 className="tray__title">{focus ? focus.name : "Inventory"}</h1>
@@ -444,37 +587,33 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
         {trayCats.length > 0 ? (
           <ul className="tray__cats">
             {trayCats.map((c) => (
-              <li
-                key={c.category ?? "none"}
-                className="cat"
-                style={{ "--c": categoryColor(c.category), "--w": `${Math.max(8, (c.count / trayMax) * 100)}%` } as CSSProperties}
-              >
-                <CategoryIcon category={c.category} />
-                <b>{c.count}</b>
-                <span className="cat__name">{c.category ?? "Other"}</span>
-                <i className="cat__bar" />
+              <li key={c.category ?? "none"}>
+                <button
+                  type="button"
+                  className="cat"
+                  aria-expanded={menuOpen && catMenu.cat === c.category}
+                  onClick={() =>
+                    setCatMenu(menuOpen && catMenu.cat === c.category ? null : { cat: c.category, at: focusId })
+                  }
+                  style={{ "--c": categoryColor(c.category), "--w": `${Math.max(8, (c.count / trayMax) * 100)}%` } as CSSProperties}
+                >
+                  <CategoryIcon category={c.category} />
+                  <b>{c.count}</b>
+                  <span className="cat__name">{c.category ?? "Other"}</span>
+                  <i className="cat__bar" />
+                </button>
               </li>
             ))}
           </ul>
         ) : (
           <p className="tray__empty">Nothing recorded here yet.</p>
         )}
-        {kids.length + siblings.length > 0 && (
+        {kids.length > 0 && (
           <ul className="tray__places">
             {kids.map((k) => (
               <li key={k.id}>
                 <button type="button" className="chip" onClick={() => go(k.id)}>
                   {k.name}
-                </button>
-              </li>
-            ))}
-            {kids.length > 0 && siblings.length > 0 && (
-              <li className="tray__sep" aria-hidden="true" />
-            )}
-            {siblings.map((s) => (
-              <li key={s.id}>
-                <button type="button" className="chip chip--side" onClick={() => go(s.id)}>
-                  {s.name}
                 </button>
               </li>
             ))}

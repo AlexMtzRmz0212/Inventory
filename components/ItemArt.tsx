@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { ArtKind, ArtSpec } from "@/lib/item-art";
-import { mix } from "@/lib/scene";
+import { isPale, mix } from "@/lib/scene";
 
 /** Every drawing fits a 48 x 48 box. */
 const BOX = 48;
@@ -10,6 +10,8 @@ interface Paint {
   fill: string;
   shade: string;
   light: string;
+  /** The fill is so light that details drawn in `light` would not show; use `shade` for them. */
+  pale: boolean;
   spec: ArtSpec;
 }
 
@@ -513,6 +515,193 @@ const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
       <rect x="17" y="25" width="14" height="10" rx="1.5" fill={light} stroke="none" />
     </>
   ),
+  // A banknote on its side: framed border, a round portrait and the number on it.
+  bill: ({ fill, shade, light, spec }) => {
+    const denom = String(spec.bill?.denom ?? "");
+    return (
+      <>
+        <rect x="1.5" y="13" width="45" height="22" rx="2.2" fill={fill} />
+        <rect x="4.5" y="16" width="39" height="16" rx="1.2" fill="none" stroke={light} strokeWidth="0.9" />
+        <circle cx="13.5" cy="24" r="5" fill={light} stroke="none" opacity="0.85" />
+        <circle cx="13.5" cy="22.6" r="1.9" fill={shade} stroke="none" />
+        <path d="M9.6 28.4c0-2.4 1.8-3.4 3.9-3.4s3.9 1 3.9 3.4Z" fill={shade} stroke="none" />
+        <text
+          x="32.5"
+          y="27.6"
+          textAnchor="middle"
+          fontSize={denom.length > 3 ? 8 : denom.length > 2 ? 10 : 12.5}
+          fontWeight="800"
+          fill={shade}
+          stroke="none"
+          style={{ fontFamily: "var(--font-body), system-ui, sans-serif" }}
+        >
+          {denom}
+        </text>
+      </>
+    );
+  },
+  // A plastic card: bank and transit cards show a chip, a logo and a swoosh of the second color; IDs
+  // a photo and lines of text under a band of it.
+  card: ({ fill, shade, light, pale, spec }) => {
+    const ink = pale ? shade : light;
+    return (
+      <>
+        <rect x="2" y="10" width="44" height="28" rx="3.6" fill={fill} />
+        {spec.card === "id" ? (
+          <>
+            <path d="M2 17.5v-4A3.5 3.5 0 0 1 5.5 10h37a3.5 3.5 0 0 1 3.5 3.5v4Z" fill={spec.accent ?? shade} stroke="none" />
+            <rect x="6" y="20.5" width="12" height="14" rx="1.5" fill={pale ? "#cdd7e0" : light} stroke="none" />
+            <circle cx="12" cy="25.4" r="2.6" fill={shade} stroke="none" />
+            <path d="M7.6 34.5c0-3.2 2-4.8 4.4-4.8s4.4 1.6 4.4 4.8Z" fill={shade} stroke="none" />
+            <path d="M22 23.5h19M22 28h19M22 32.5h12" fill="none" stroke={ink} strokeWidth="1.8" />
+          </>
+        ) : (
+          <>
+            <rect x="6" y="15" width="9.5" height="7.5" rx="1.6" fill="#e2c05a" stroke={shade} strokeWidth="1" />
+            <circle cx="36" cy="19" r="3.9" fill={spec.accent ?? ink} stroke="none" opacity="0.9" />
+            <circle cx="40.2" cy="19" r="3.9" fill={ink} stroke="none" opacity="0.7" />
+            <path d="M6.5 28h4M12.5 28h4M18.5 28h4M24.5 28h4" fill="none" stroke={ink} strokeWidth="2.4" />
+            {spec.accent && (
+              <path d="M2 32Q22 26.5 46 31.5v2.9a3.6 3.6 0 0 1-3.6 3.6H5.6A3.6 3.6 0 0 1 2 34.4Z" fill={spec.accent} stroke="none" />
+            )}
+          </>
+        )}
+      </>
+    );
+  },
+  // An HDMI cable: a black cord between two plugs with flat silver tips.
+  hdmi: ({ fill }) => (
+    <>
+      <Rod d="M16 33C28 33 20 15 32 15" w={3.4} color={fill} />
+      <rect x="9" y="28" width="8.5" height="10" rx="2" fill={fill} />
+      <path d="M2.5 29.5h6.5v7h-4.5l-2-2Z" fill="#c8ccd2" />
+      <rect x="30.5" y="10" width="8.5" height="10" rx="2" fill={fill} />
+      <path d="M39 11.5h6.5v5l-2 2H39Z" fill="#c8ccd2" />
+    </>
+  ),
+  // A cable as just its two ends: a USB-A plug (or USB-C) and a USB-C plug, in the cable's color.
+  usbcable: ({ fill, spec }) => {
+    const cc = spec.cable === "cc";
+    return (
+      <>
+        {/* A short S of cord joining the two ends. */}
+        <Rod d="M24 16C34 16 14 33 24 33" w={2.4} color={fill} />
+        <rect x="14" y="9" width="11" height="14" rx="3" fill={fill} />
+        {cc ? (
+          <>
+            <rect x="3" y="11.5" width="12" height="9" rx="4.5" fill="#c8ccd2" />
+            <rect x="6" y="15" width="7" height="2" rx="1" fill="#3b4351" stroke="none" />
+          </>
+        ) : (
+          <>
+            <rect x="3" y="11.5" width="12" height="9" rx="1" fill="#c8ccd2" />
+            <rect x="5" y="15.5" width="9" height="2.6" fill={spec.port ?? "#eef2f5"} stroke="none" />
+          </>
+        )}
+        <rect x="23" y="26" width="11" height="14" rx="3" fill={fill} />
+        <rect x="33" y="28.5" width="12" height="9" rx="4.5" fill="#c8ccd2" />
+        <rect x="36" y="32" width="7" height="2" rx="1" fill="#3b4351" stroke="none" />
+      </>
+    );
+  },
+  // A black folding knife, blade out to the left.
+  knife: ({ fill, light }) => (
+    <>
+      <path d="M2.5 28 8 21.5Q15 17.5 26 18V28.5Z" fill={fill} />
+      <path d="M8 22.5Q15 19.5 24 19.8" fill="none" stroke={light} strokeWidth="1" opacity="0.55" />
+      <path d="M24 17H43Q46 17 46 20V27Q46 30 43 30H27Q24 30 24 28Z" fill={fill} />
+      <circle cx="29.5" cy="23.5" r="1.7" fill={light} stroke="none" />
+      <path d="M36 25h8M36 27.5h8" fill="none" stroke={light} strokeWidth="1.2" opacity="0.7" />
+      <circle cx="43.5" cy="20.3" r="1.1" fill={light} stroke="none" />
+    </>
+  ),
+  // A hammer multi-tool: a cap on one end, a claw over it and the body running down to the right.
+  hammer: ({ fill, shade, light }) => (
+    <>
+      <path d="M19 14 34 12 42 37Q44 44 37 44H31Q27 44 26 40Z" fill={fill} />
+      <path d="M14 12Q22 5 34 8Q40 10 41 14Q31 12 22 16L14 20Z" fill={fill} />
+      <rect x="3.5" y="10" width="11" height="13" rx="3" fill={shade} />
+      <circle cx="31" cy="38" r="2" fill={light} stroke="none" />
+      <path d="M28 20 33 34" fill="none" stroke={light} strokeWidth="1.2" opacity="0.6" />
+    </>
+  ),
+  // A piano keyboard: a dark panel over a row of white keys with the black ones between.
+  piano: () => (
+    <>
+      <rect x="2" y="10" width="44" height="10" rx="2.5" fill="#3b4351" />
+      <rect x="2" y="19" width="44" height="19" rx="2" fill="#f4f6f8" />
+      <path d="M8.3 26v12M14.6 26v12M20.9 26v12M27.1 26v12M33.4 26v12M39.7 26v12" fill="none" strokeWidth="1" />
+      {[6, 12.3, 24.8, 31, 37.4].map((x) => (
+        <rect key={x} x={x} y="19" width="4.2" height="11" rx="1" fill="#3b4351" />
+      ))}
+    </>
+  ),
+  // A box of lego: a brick with studs on top.
+  lego: ({ fill, shade, light }) => (
+    <>
+      <rect x="11" y="12" width="7" height="6" rx="2" fill={fill} />
+      <rect x="20.5" y="12" width="7" height="6" rx="2" fill={fill} />
+      <rect x="30" y="12" width="7" height="6" rx="2" fill={fill} />
+      <rect x="6" y="17" width="36" height="22" rx="3" fill={fill} />
+      <path d="M6 24h36" fill="none" stroke={shade} strokeWidth="1.4" />
+      <rect x="14" y="28" width="20" height="6" rx="1.5" fill={light} stroke="none" opacity="0.8" />
+    </>
+  ),
+  // A streaming box (a Roku): a small flat box with a light and the logo dot.
+  streamer: ({ fill, light }) => (
+    <>
+      <rect x="5" y="18" width="38" height="15" rx="4.5" fill={fill} />
+      <circle cx="14" cy="25.5" r="2.4" fill={light} stroke="none" />
+      <path d="M22 25.5h14" fill="none" stroke={light} strokeWidth="1.6" opacity="0.7" />
+      <path d="M43 27h3" fill="none" strokeWidth="2" />
+    </>
+  ),
+  // Bedding folded in a stack: stripes in the second color when it has one.
+  bedding: ({ fill, shade, spec }) => (
+    <>
+      <rect x="4" y="14" width="40" height="22" rx="4.5" fill={fill} />
+      {spec.accent && <path d="M11 14.8v20.4M19 14.8v20.4M27 14.8v20.4M35 14.8v20.4" fill="none" stroke={spec.accent} strokeWidth="3.4" strokeLinecap="butt" />}
+      <path d="M4 25.5h40" fill="none" stroke={shade} strokeWidth="1.3" />
+      <rect x="4" y="14" width="40" height="22" rx="4.5" fill="none" />
+    </>
+  ),
+  // One pillow, or two when it is a pair: plump, with a seam along the edge.
+  pillow: ({ fill, shade, spec }) => {
+    const one = (
+      <>
+        <path d="M6 16Q24 9 42 16Q46 25 42 34Q24 40 6 34Q2 25 6 16Z" fill={fill} />
+        <path d="M10 20Q24 15 38 20M10 30Q24 35 38 30" fill="none" stroke={shade} strokeWidth="1.2" opacity="0.7" />
+      </>
+    );
+    return spec.pair ? (
+      <>
+        <g transform="translate(-7 -6) scale(0.85)">{one}</g>
+        <g transform="translate(5 4) scale(0.85)">{one}</g>
+      </>
+    ) : (
+      one
+    );
+  },
+  // A Mexican passport: a green booklet with the gold coat of arms and the title in gold.
+  passport: ({ fill, shade }) => (
+    <>
+      <rect x="10" y="4" width="28" height="40" rx="2.5" fill={fill} />
+      <path d="M14 4.5v39" fill="none" stroke={shade} strokeWidth="1.2" />
+      <circle cx="25.5" cy="18.5" r="7" fill="none" stroke="#e2c05a" strokeWidth="1.6" />
+      <path d="M22.3 15h6.4l-.6 5.2-2.6 2.8-2.6-2.8Z" fill="#e2c05a" stroke="none" />
+      <path d="M18.5 31h14M20.5 35h10" fill="none" stroke="#e2c05a" strokeWidth="1.6" />
+    </>
+  ),
+  // A keychain: a split ring, a short chain and a name tag.
+  keychain: ({ fill, shade, light }) => (
+    <>
+      <Rod d="M18 9a6 6 0 1 0 12 0a6 6 0 1 0-12 0" w={2.4} color="#c8ccd2" />
+      <Rod d="M24 15v7" w={2} color="#c8ccd2" />
+      <rect x="12" y="21" width="24" height="21" rx="4.5" fill={fill} />
+      <circle cx="24" cy="26.2" r="2.1" fill={shade} stroke="none" />
+      <path d="M17.5 33.2h13M17.5 37.6h8.5" fill="none" stroke={light} strokeWidth="2" />
+    </>
+  ),
   folder: ({ fill, shade, light }) => (
     <>
       <path d="M6 11h14l4 4h18v24H6Z" fill={shade} />
@@ -526,13 +715,20 @@ const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
       <rect x="7" y="11" width="34" height="10" rx="3.5" fill={fill} />
     </>
   ),
-  deskparts: ({ fill, shade }) => (
-    // A desk taken apart: the top leaning on its side, the legs lying beside it.
+  // A desk taken apart: four white wooden planks, stacked a little askew.
+  deskparts: () => (
     <>
-      <path d="M7 43 17 6l13 4-8 33Z" fill={fill} />
-      <path d="M17 6l-3 11" fill="none" stroke={shade} />
-      <Rod d="M27 38h17" w={3.4} color={shade} />
-      <Rod d="M25 43h19" w={3.4} color={shade} />
+      {[
+        { y: 31, r: -2, x: 3 },
+        { y: 24, r: 2, x: 5 },
+        { y: 17, r: -1.5, x: 2 },
+        { y: 10, r: 2.5, x: 4 },
+      ].map((p, i) => (
+        <g key={i} transform={`rotate(${p.r} 24 ${p.y + 3})`}>
+          <rect x={p.x} y={p.y} width="40" height="6.5" rx="1.2" fill="#f3f4f6" />
+          <path d={`M${p.x + 5} ${p.y + 3.3}h14M${p.x + 24} ${p.y + 3.3}h11`} fill="none" stroke="#c9ced6" strokeWidth="1" />
+        </g>
+      ))}
     </>
   ),
   tablet: ({ fill, shade, light }) => (
@@ -654,7 +850,7 @@ export function ItemArt({ spec, size = 52 }: { spec: ArtSpec; size?: number }) {
       strokeLinecap="round"
       aria-hidden="true"
     >
-      {DRAW[spec.kind]({ fill: spec.fill, shade, light, spec })}
+      {DRAW[spec.kind]({ fill: spec.fill, shade, light, pale: isPale(spec.fill), spec })}
     </g>
   );
 }

@@ -43,6 +43,8 @@ const item = (
   clothesType: null,
   color: null,
   cover: null,
+  tableX: null,
+  tableY: null,
   ...extra,
 });
 
@@ -62,6 +64,15 @@ const items: Item[] = [
   item("notebook", "Notebook", "Misc", "desk"),
   item("puzzle-cube", "Puzzle cube", "Misc", "desk"),
   item("pen-set", "Pen set", "Misc", "desk"),
+  // Apartment desk, in the wallet
+  item("wallet-fives", "5 USD bills (x2)", "Misc", "desk", { boxId: "wallet" }),
+  item("wallet-twenty", "20 USD bill", "Misc", "desk", { boxId: "wallet" }),
+  item("wallet-euros", "10 EUR bills (x3)", "Misc", "desk", { boxId: "wallet" }),
+  item("wallet-debit", "Debit card", "Documents", "desk", { boxId: "wallet", color: "navy" }),
+  item("wallet-credit", "Credit card", "Documents", "desk", { boxId: "wallet", color: "white and light green" }),
+  item("wallet-licence", "Driver's licence", "Documents", "desk", { boxId: "wallet", color: "lime green" }),
+  item("wallet-library", "Library card", "Documents", "desk", { boxId: "wallet", color: "white and light blue" }),
+  item("wallet-keys", "Keychain", "Misc", "desk", { boxId: "wallet" }),
   // Apartment closet
   item("winter-coat", "Winter coat", "Clothes", "closet"),
   item("jeans", "Jeans (x3)", "Clothes", "closet"),
@@ -163,6 +174,8 @@ const box = (
   volumeL: Math.round((w * h * l) / 100) / 10,
   filled: false,
   locationId,
+  tableX: null,
+  tableY: null,
 });
 
 const containers: Container[] = [

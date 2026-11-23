@@ -1,7 +1,21 @@
+import { billColor, billOf, type Bill } from "./cash";
 import { categoryColor } from "./palette";
 import type { Item } from "./types";
 
 export type ArtKind =
+  | "bill"
+  | "card"
+  | "keychain"
+  | "hdmi"
+  | "usbcable"
+  | "knife"
+  | "hammer"
+  | "piano"
+  | "lego"
+  | "streamer"
+  | "bedding"
+  | "pillow"
+  | "passport"
   | "tee"
   | "teeLong"
   | "polo"
@@ -68,6 +82,19 @@ type ItemLike = Pick<Item, "name" | "category"> & Partial<Pick<Item, "clothesTyp
 
 /** Name hints, checked in order: the most specific first ("Laptop charger" is a charger, not a laptop). */
 const BY_NAME: [RegExp, ArtKind][] = [
+  [/^\s*\d+\s*(cad|usd|mxn|eur)\s*bills?\b/i, "bill"],
+  [/key ?chain|key ?ring/i, "keychain"],
+  [/hdmi/i, "hdmi"],
+  // Any other cable (USB, HDD, ...) is drawn as its two ends, not as a charger.
+  [/\bcable\b/i, "usbcable"],
+  [/knife/i, "knife"],
+  [/hammer/i, "hammer"],
+  [/piano/i, "piano"],
+  [/lego/i, "lego"],
+  [/roku|chromecast|fire ?stick/i, "streamer"],
+  [/duvet|blanket|bedsheet|comforter|quilt/i, "bedding"],
+  [/pillow/i, "pillow"],
+  [/passport/i, "passport"],
   [/controller|gamepad|joystick/i, "controller"],
   [/keyboard/i, "keyboard"],
   [/\bmouse\b/i, "mouse"],
@@ -117,8 +144,13 @@ const BY_NAME: [RegExp, ArtKind][] = [
   [/dress shirt/i, "dress"],
   [/mug|cup|teapot|tea set|coffee/i, "mug"],
   [/bottle|toiletr|shampoo|lotion|sunscreen/i, "bottle"],
+  // Bank, transit and ID cards and licences. Not the kind that goes in a reader.
+  [/\bcard\b(?!\s*reader)|licen[cs]e|\bine\b|\bus visa\b/i, "card"],
   [/folder|document|passport|ticket|boarding/i, "folder"],
 ];
+
+/** Cards with a photo and lines of text (IDs, licences, visas, health and library cards) versus bank and transit cards with a chip. */
+const ID_CARD = /licen[cs]e|\bine\b|\bvisa\b|health|student|dental|library|\bid\b/i;
 
 const BY_CATEGORY: Record<string, ArtKind> = {
   Clothes: "tee",
@@ -174,6 +206,14 @@ export function artKind(item: ItemLike): ArtKind {
 const COLOR_WORDS: [string, string][] = [
   ["black", "#6b7683"],
   ["light brown", "#b98a5a"],
+  ["light green", "#9fe0b0"],
+  ["lime green", "#a6e22e"],
+  ["lime", "#a6e22e"],
+  ["dark green", "#1f7a4d"],
+  ["light blue", "#bfe3fa"],
+  ["dark blue", "#2f56b0"],
+  ["fluorescent green", "#39f06a"],
+  ["dark yellow", "#c79a1e"],
   ["taupe", "#6f655c"],
   ["white", "#eef2f5"],
   ["gray", "#9aa7b5"],
@@ -195,11 +235,14 @@ const COLOR_WORDS: [string, string][] = [
 /** The color words in the text, in the order they appear ("Blue and black vest" is blue, then black). */
 function colorsIn(text: string): string[] {
   // "Old Navy" is a brand, not a color.
-  const lower = text.toLowerCase().replace(/old navy/g, "");
+  let lower = text.toLowerCase().replace(/old navy/g, "");
   const found: { at: number; hex: string }[] = [];
-  for (const [word, hex] of COLOR_WORDS) {
+  // Longest names first, blanking each match, so "light green" is not also read as "green".
+  for (const [word, hex] of [...COLOR_WORDS].sort((a, b) => b[0].length - a[0].length)) {
     const at = lower.search(new RegExp(`\\b${word}\\b`));
-    if (at >= 0) found.push({ at, hex });
+    if (at < 0) continue;
+    found.push({ at, hex });
+    lower = lower.slice(0, at) + " ".repeat(word.length) + lower.slice(at + word.length);
   }
   return found.sort((a, b) => a.at - b.at).map((f) => f.hex);
 }
@@ -219,10 +262,24 @@ const KIND_DEFAULT: Partial<Record<ArtKind, string>> = {
   tablet: "#4b5568",
   mouse: "#6b7683",
   keyboard: "#4b5568",
+  card: "#8a96a6",
+  keychain: "#d9b45a",
+  hdmi: "#3f4857",
+  usbcable: "#4b5568",
+  knife: "#3b4351",
+  hammer: "#3b4351",
+  piano: "#3b4351",
+  lego: "#e0584d",
+  streamer: "#7a4fd1",
+  bedding: "#9aa7b5",
+  pillow: "#eef2f5",
+  passport: "#1e5b3a",
 };
 
-/** The color field wins, then a color word in the name, then what that kind of thing usually is. */
+/** The color field wins, then a color word in the name, then what that kind of thing usually is. Bills are the color of the real note. */
 export function itemTint(item: ItemLike): string {
+  const bill = billOf(item);
+  if (bill) return billColor(bill);
   const kind = artKind(item);
   return (
     (item.color && firstColor(item.color)) ||
@@ -245,13 +302,56 @@ export interface ArtSpec {
   accent: string | null;
   /** A printed pattern for a cover that has no image. */
   pattern: "sudoku" | "palm" | null;
+  /** Bills: which note this is, for its color and the number on it. */
+  bill: Bill | null;
+  /** Cards: with a photo (ID) or with a chip (bank, transit). */
+  card: "id" | "bank" | null;
+  /** Cables: both ends USB-C ("cc") or a USB-A end and a USB-C end ("ac"). */
+  cable: "ac" | "cc" | null;
+  /** Cables: the color inside the USB-A plug, from "(blue port)" in the name. */
+  port: string | null;
+  /** Pillows: a pair, from "(x2)" in the name. */
+  pair: boolean;
+}
+
+const PORT_COLORS: Record<string, string> = {
+  white: "#eef2f5",
+  blue: "#3f7fe0",
+  orange: "#f58e4b",
+  black: "#3b4351",
+  red: "#e0584d",
+  green: "#3fae6a",
+};
+
+/** The drawing of one bill of this denomination. */
+export function billSpec(b: Pick<Bill, "currency" | "denom">): ArtSpec {
+  return {
+    kind: "bill",
+    fill: billColor(b),
+    grid: 3,
+    scheme: "classic",
+    cover: null,
+    accent: null,
+    pattern: null,
+    bill: { ...b, count: 1 },
+    card: null,
+    cable: null,
+    port: null,
+    pair: false,
+  };
 }
 
 export function artOf(item: ItemLike): ArtSpec {
   const n = /(\d)\s*x\s*\d/i.exec(item.name);
   const fields = colorsIn(item.color ?? "");
+  const kind = artKind(item);
   return {
-    kind: artKind(item),
+    kind,
+    bill: kind === "bill" ? billOf(item) : null,
+    card: kind === "card" ? (ID_CARD.test(item.name) ? "id" : "bank") : null,
+    pair: kind === "pillow" && /x2|two|pair/i.test(item.name),
+    cable: kind === "usbcable" ? (/\bc[- ]?(to|-)[- ]?c\b/i.test(item.name) ? "cc" : "ac") : null,
+    port: PORT_COLORS[/\b(\w+) port\b/i.exec(item.name)?.[1]?.toLowerCase() ?? ""] ?? null,
     fill: itemTint(item),
     accent: fields[1] ?? null,
     pattern: /sudoku/i.test(item.name) ? "sudoku" : /palm/i.test(`${item.name} ${item.notes ?? ""}`) ? "palm" : null,
@@ -263,10 +363,25 @@ export function artOf(item: ItemLike): ArtSpec {
 
 /** Items in an order that groups like things: by category, then by what kind of thing they are, then by name. */
 export function groupedItems<T extends ItemLike>(items: T[]): T[] {
-  return [...items].sort(
+  const sorted = [...items].sort(
     (a, b) =>
       (a.category ?? "").localeCompare(b.category ?? "") ||
       artKind(a).localeCompare(artKind(b)) ||
       a.name.localeCompare(b.name),
   );
+  // What belongs to something goes right after it: "HDD cable" next to "HDD".
+  const out: T[] = [];
+  const used = new Set<T>();
+  for (const it of sorted) {
+    if (used.has(it)) continue;
+    out.push(it);
+    used.add(it);
+    for (const other of sorted) {
+      if (!used.has(other) && other.name.startsWith(`${it.name} `)) {
+        out.push(other);
+        used.add(other);
+      }
+    }
+  }
+  return out;
 }
