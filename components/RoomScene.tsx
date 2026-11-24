@@ -1,8 +1,10 @@
 "use client";
 
 import { animate } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
+import { flushSync } from "react-dom";
+import { setDeskSpot, setDeskSpots } from "@/app/actions/inventory";
 import { lerp } from "@/lib/camera";
 import {
   CASH_ART,
@@ -29,6 +31,9 @@ import {
   SCENE_W,
   burstPlan,
   deskLayout,
+  deskPoint,
+  deskSpotEdits,
+  deskUV,
   deskWidth,
   hasTableSpot,
   lineupPlan,
@@ -50,6 +55,8 @@ import {
   type LineupPlan,
   type PlacedBox,
   type PlacedItem,
+  type SpotEdit,
+  underDesk,
 } from "@/lib/scene";
 import type { Container, Inventory, Item, Place } from "@/lib/types";
 import { isPileId, pileStub, splitPiles, type Pile } from "@/lib/pile";
@@ -67,6 +74,36 @@ interface Props {
   focusId: string | null;
   visible: boolean;
   onFocus: (id: string) => void;
+  /** The owner may pin things to spots on a desk by dragging them. */
+  canArrange?: boolean;
+}
+
+/** Where a thing sits on its desk, 0 to 100 each way; both null is "wherever there is room". */
+type Spot = { x: number | null; y: number | null };
+
+/** The owner's tools while arranging one desk, handed to the things on it. */
+interface Arrange {
+  svg: RefObject<SVGSVGElement | null>;
+  /** Center and width of the desk, to turn a point on the screen into a spot on its top. */
+  cx: number;
+  wide: number;
+  /** The thing being dragged, drawn last so it passes in front of the rest. */
+  liftedId: string | null;
+  lift: (id: string | null) => void;
+  /** Pins a thing to a spot on this desk, or lets it go with null. It never changes where the thing is kept. */
+  move: (kind: "item" | "container", id: string, x: number | null, y: number | null) => void;
+  /** Containers standing on the desk top: the only ones that can be moved. */
+  boxIds: Set<string>;
+}
+
+/** The inventory with the owner's latest pins laid over it, until what was saved comes back. */
+function withSpots(inv: Inventory, spots: Record<string, Spot>): Inventory {
+  if (Object.keys(spots).length === 0) return inv;
+  const at = <T extends { id: string; tableX: number | null; tableY: number | null }>(t: T): T => {
+    const s = spots[t.id];
+    return s ? { ...t, tableX: s.x, tableY: s.y } : t;
+  };
+  return { ...inv, items: inv.items.map(at), containers: inv.containers.map(at) };
 }
 
 const EASE = [0.65, 0, 0.35, 1] as const;
@@ -126,7 +163,7 @@ function onKey(e: KeyboardEvent, fn: () => void) {
   }
 }
 
-export default function RoomScene({ site, idx, inventory, tint, focusId, visible, onFocus }: Props) {
+export default function RoomScene({ site, idx, inventory: base, tint, focusId, visible, onFocus, canArrange = false }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const aspectRef = useRef(16 / 9);
@@ -138,6 +175,28 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
   /** The container that is open, and where the camera was when it opened. */
   const [open, setOpen] = useState<{ id: string; at: string | null } | null>(null);
 
+  // Spots the owner has just pinned, shown at once while they are saved.
+  const [pins, setPins] = useState<Record<string, Spot>>({});
+  // Once what was saved comes back with the next page, the pin has done its job.
+  const [seen, setSeen] = useState(base);
+  if (seen !== base) {
+    setSeen(base);
+    setPins((o) => {
+      const kept: Record<string, Spot> = {};
+      for (const t of [...base.items, ...base.containers]) {
+        const s = o[t.id];
+        if (s && !(t.tableX === s.x && t.tableY === s.y)) kept[t.id] = s;
+      }
+      return kept;
+    });
+  }
+  const inventory = useMemo(() => withSpots(base, pins), [base, pins]);
+  /** The desk being arranged (a spot id), the thing being dragged, and a message when a save fails. */
+  const [arrangeFor, setArrangeFor] = useState<string | null>(null);
+  const [liftedId, setLiftedId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [, startSave] = useTransition();
+
   const spots = useMemo(
     () => (idx.children.get(site.id) ?? []).filter((p) => p.level === "Spot"),
     [idx, site.id],
@@ -145,6 +204,30 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
   const kinds = useMemo(() => spots.map((p) => furnitureKind(p.name)), [spots]);
   const { xs, span } = useMemo(() => slotsFor(kinds), [kinds]);
   const spotIndex = spots.findIndex((s) => s.id === focusId);
+  const deskFocused = spotIndex >= 0 && kinds[spotIndex] === "desk";
+  const arranging = canArrange && visible && deskFocused && arrangeFor === focusId;
+
+  /** Pins a thing to a spot on the desk it is on, or lets it go with null. Only its Table X and Y ever change. */
+  const save = (kind: "item" | "container", id: string, x: number | null, y: number | null) => {
+    setNote(null);
+    setPins((o) => ({ ...o, [id]: { x, y } }));
+    startSave(async () => {
+      let ok = false;
+      try {
+        ok = (await setDeskSpot(kind, id, x, y)).ok;
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        setPins((o) => {
+          const rest = { ...o };
+          delete rest[id];
+          return rest;
+        });
+        setNote("Couldn't save that spot.");
+      }
+    });
+  };
 
   const boxesAt = (id: string) => inventory.containers.filter((c) => c.locationId === id);
   const contents = useMemo(() => itemsByContainer(inventory), [inventory]);
@@ -173,10 +256,46 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
   const deskPlans = spots.map((spot, i) => {
     const here = boxesAt(spot.id);
     const loose = itemsAt(spot.id);
-    if (kinds[i] !== "desk" || !(loose.some(hasTableSpot) || here.some(hasTableSpot))) return null;
+    // While arranging, the desk is laid out the same way whether or not anything is pinned yet, so what is dragged is what is seen.
+    const forced = arranging && spot.id === focusId;
+    if (kinds[i] !== "desk" || !(forced || loose.some(hasTableSpot) || here.some(hasTableSpot))) return null;
     const onTop = here.filter((c) => c.type === "Wallet" || c.type === "Pouch" || hasTableSpot(c));
     return deskLayout(loose, onTop, xs[i], deskWidth(spot.name));
   });
+  // What "Pin all" and "Unpin all" would change on the desk being arranged.
+  const bulk = useMemo(() => {
+    const plan = arranging ? deskPlans[spotIndex] : null;
+    return plan ? deskSpotEdits(plan, xs[spotIndex], deskWidth(spots[spotIndex].name)) : { pin: [], unpin: [] };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arranging, spotIndex, inventory, xs, spots]);
+
+  /** Pins or lets go of a whole desk's things in one go, so one drag does not reshuffle the rest. */
+  const saveAll = (edits: SpotEdit[]) => {
+    if (edits.length === 0) return;
+    setNote(null);
+    setPins((o) => {
+      const next = { ...o };
+      for (const e of edits) next[e.id] = { x: e.x, y: e.y };
+      return next;
+    });
+    startSave(async () => {
+      let failed = edits.map((e) => e.id);
+      try {
+        failed = (await setDeskSpots(edits)).failed;
+      } catch {
+        // everything is put back
+      }
+      if (failed.length > 0) {
+        setPins((o) => {
+          const rest = { ...o };
+          for (const id of failed) delete rest[id];
+          return rest;
+        });
+        setNote(`Couldn't save ${failed.length === edits.length ? "those spots" : `${failed.length} of them`}.`);
+      }
+    });
+  };
+
   // Cardboard boxes in a closet sit on its shelf; backpacks and the like stand on the floor.
   const shelfBoxes = spots.map((spot, i) =>
     kinds[i] === "closet" ? boxesAt(spot.id).filter((c) => c.type === "Cardboard box") : [],
@@ -280,10 +399,12 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
     if (spotIndex >= 0 && kinds[spotIndex] === "desk") {
       // Something on the floor under the desk pulls the view back and down to include it.
       const low = deskPlans[spotIndex]?.items.some((p) => p.y > 440) ?? false;
+      const wide = deskWidth(spots[spotIndex].name);
       return {
+        // A long desk is aimed a little lower, so its front edge sits higher in the view, clear of the tray.
+        cy: (low ? 360 : 316) + (wide > 1 ? 24 : 0),
         cx: xs[spotIndex],
-        cy: low ? 360 : 316,
-        w: Math.max(330, 210 * a) * deskWidth(spots[spotIndex].name) * (low ? 1.2 : 1),
+        w: Math.max(330, 210 * a) * wide * (low ? 1.2 : 1),
       };
     }
     // A couch sits low in the room, so look at it lower and closer.
@@ -374,7 +495,7 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
     >
       <svg
         ref={svgRef}
-        className="scene__svg"
+        className={arranging ? "scene__svg is-arranging" : "scene__svg"}
         viewBox={`0 0 ${SCENE_W} ${SCENE_H}`}
         role="group"
         aria-label={`Inside ${site.name}`}
@@ -415,6 +536,18 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
           const kind = furnitureKind(spot.name);
           const x = xs[i];
           const dim = focusId !== null && focusId !== spot.id;
+          const arrange: Arrange | undefined =
+            arranging && spot.id === focusId
+              ? {
+                  svg: svgRef,
+                  cx: x,
+                  wide: deskWidth(spot.name),
+                  liftedId,
+                  lift: setLiftedId,
+                  move: save,
+                  boxIds: new Set((deskPlans[i]?.boxes ?? []).map((p) => p.c.id)),
+                }
+              : undefined;
           return (
             <g key={spot.id} className={dim ? "scene__spot is-dim" : "scene__spot"}>
               <ellipse cx={x} cy={BASE_Y + 6} rx={FURNITURE_WIDTH[kind] * 0.55} ry={12} fill="#000" opacity={0.22} />
@@ -438,7 +571,7 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
                   {spot.name}
                 </text>
               </g>
-              <Boxes placed={spotBoxes[i]} contents={contents} openId={openId} visible={visible} onToggle={toggle} />
+              <Boxes placed={spotBoxes[i]} contents={contents} openId={openId} visible={visible} onToggle={toggle} arrange={arrange} />
               <Standing
                 items={itemsAt(spot.id)}
                 // With boxes on the closet shelf, loose things hang above it instead.
@@ -447,6 +580,7 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
                 placed={deskPlans[i]?.items ?? closetPlans[i]}
                 visible={visible}
                 onPick={pickItem}
+                arrange={arrange}
               />
             </g>
           );
@@ -489,6 +623,34 @@ export default function RoomScene({ site, idx, inventory, tint, focusId, visible
           </text>
         )}
       </svg>
+
+      {canArrange && deskFocused && !openBox && !lineup && (
+        <div className="scene__arrange">
+          {arranging && <p>{note ?? "Drag to pin. Tap a pin to let go."}</p>}
+          {arranging && bulk.pin.length > 0 && (
+            <button type="button" className="btn btn--ghost" onClick={() => saveAll(bulk.pin)}>
+              Pin all
+            </button>
+          )}
+          {arranging && bulk.unpin.length > 0 && (
+            <button type="button" className="btn btn--ghost" onClick={() => saveAll(bulk.unpin)}>
+              Unpin all
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost"
+            aria-pressed={arranging}
+            onClick={() => {
+              setNote(null);
+              setPicked(null);
+              setArrangeFor(arranging ? null : focusId);
+            }}
+          >
+            {arranging ? "Done" : "Arrange"}
+          </button>
+        </div>
+      )}
 
       {(openBox || lineup) && (
         <button
@@ -587,6 +749,7 @@ function Standing({
   placed: given,
   visible,
   onPick,
+  arrange,
 }: {
   items: Item[];
   levels: Level[];
@@ -595,29 +758,177 @@ function Standing({
   placed?: PlacedItem[];
   visible: boolean;
   onPick: (i: Item) => void;
+  /** Set while the owner arranges this desk: its things can be dragged around the desk top. */
+  arrange?: Arrange;
 }) {
   // Back rows first, so the front ones overlap them.
-  const placed = given ?? placeOnLevels(items, levels, cx).sort((a, b) => a.y - b.y);
+  const sorted = given ?? placeOnLevels(items, levels, cx).sort((a, b) => a.y - b.y);
+  // The one being dragged is drawn last, in front of the rest.
+  const placed = arrange?.liftedId
+    ? [...sorted.filter((p) => p.item.id !== arrange.liftedId), ...sorted.filter((p) => p.item.id === arrange.liftedId)]
+    : sorted;
   return (
     <g>
-      {placed.map(({ item, x, y, size }) => (
+      {placed.map(({ item, x, y, size }) => {
+        const art = (
+          <g
+            className="rack__item"
+            role="button"
+            tabIndex={visible ? 0 : -1}
+            aria-label={item.name}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPick(item);
+            }}
+            onKeyDown={(e) => onKey(e, () => onPick(item))}
+            transform={`translate(${x} ${y})`}
+          >
+            <title>{item.name}</title>
+            <ItemArt spec={artOf(item)} size={size} />
+          </g>
+        );
+        // What stands on the desk top can be moved on it. What is under the desk is on another level.
+        if (!arrange || !given || underDesk(item)) return <Fragment key={item.id}>{art}</Fragment>;
+        return (
+          <Pinnable
+            key={item.id}
+            arrange={arrange}
+            kind="item"
+            id={item.id}
+            name={item.name}
+            base={{ x, y: y + size / 2 }}
+            badge={{ x: x + size * 0.4, y: y - size * 0.42 }}
+            pinned={hasTableSpot(item)}
+          >
+            {art}
+          </Pinnable>
+        );
+      })}
+    </g>
+  );
+}
+
+/**
+ * Lets the owner drag one thing around the top of its desk. The drop spot is worked out from where
+ * the pointer is, clamped to the desk top, and saved as its Table X and Y; there is nothing here
+ * that could drop it into a box, onto other furniture or onto the floor. While the pointer moves
+ * only this group's transform changes, so the scene is not rebuilt until the drop.
+ */
+function Pinnable({
+  arrange,
+  kind,
+  id,
+  name,
+  base,
+  badge,
+  pinned,
+  children,
+}: {
+  arrange: Arrange;
+  kind: "item" | "container";
+  id: string;
+  name: string;
+  /** Where the thing stands on the desk, in scene units. */
+  base: { x: number; y: number };
+  /** Where the pin sits, at the top corner of the thing. */
+  badge: { x: number; y: number };
+  pinned: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<SVGGElement>(null);
+
+  const onPointerDown = (e: ReactPointerEvent<SVGGElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const { cx, wide } = arrange;
+    const toScene = (clientX: number, clientY: number) => {
+      const m = arrange.svg.current?.getScreenCTM();
+      if (!m) return null;
+      const p = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+      return { x: p.x, y: p.y };
+    };
+    const from = toScene(e.clientX, e.clientY);
+    if (!from) return;
+    // Hold it by the point that was grabbed, so it does not jump to the pointer.
+    const grab = { x: from.x - base.x, y: from.y - base.y };
+    const home = deskUV(base.x, base.y, cx, wide);
+    const homeScale = deskPoint(home.u, home.v, cx, wide).scale;
+    const el = ref.current;
+    const pid = e.pointerId;
+    const downX = e.clientX;
+    const downY = e.clientY;
+    let moved = false;
+    let { u, v } = home;
+
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pid) return;
+      if (!moved) {
+        // A tap is not a drag, so it can still open the thing.
+        if (Math.hypot(ev.clientX - downX, ev.clientY - downY) < 5) return;
+        moved = true;
+        el?.classList.add("is-dragging");
+        arrange.lift(id);
+      }
+      const p = toScene(ev.clientX, ev.clientY);
+      if (!p) return;
+      ({ u, v } = deskUV(p.x - grab.x, p.y - grab.y, cx, wide));
+      const to = deskPoint(u, v, cx, wide);
+      // Smaller toward the back, as everything on the desk is.
+      el?.setAttribute("transform", `translate(${to.x} ${to.y}) scale(${to.scale / homeScale}) translate(${-base.x} ${-base.y})`);
+    };
+    const end = (ev: PointerEvent) => {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (!moved) return;
+      el?.classList.remove("is-dragging");
+      if (ev.type === "pointercancel") {
+        el?.removeAttribute("transform");
+        arrange.lift(null);
+        return;
+      }
+      // The click that follows a drag is not a tap on anything.
+      const swallow = (c: MouseEvent) => {
+        c.stopPropagation();
+        c.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener("click", swallow, true), 100);
+      flushSync(() => {
+        arrange.move(kind, id, Math.round(u * 1000) / 10, Math.round(v * 1000) / 10);
+        arrange.lift(null);
+      });
+      // Now that it is drawn where it was dropped, the drag's offset is not needed.
+      el?.removeAttribute("transform");
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+
+  return (
+    <g ref={ref} className="spotpin" onPointerDown={onPointerDown}>
+      {children}
+      {pinned && (
         <g
-          key={item.id}
-          className="rack__item"
+          className="spotpin__badge"
+          transform={`translate(${badge.x} ${badge.y})`}
           role="button"
-          tabIndex={visible ? 0 : -1}
-          aria-label={item.name}
+          tabIndex={0}
+          aria-label={`Unpin ${name}`}
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            onPick(item);
+            arrange.move(kind, id, null, null);
           }}
-          onKeyDown={(e) => onKey(e, () => onPick(item))}
-          transform={`translate(${x} ${y})`}
+          onKeyDown={(e) => onKey(e, () => arrange.move(kind, id, null, null))}
         >
-          <title>{item.name}</title>
-          <ItemArt spec={artOf(item)} size={size} />
+          <title>{`Unpin ${name}`}</title>
+          <circle r="8" />
+          <path d="M-2.4 -5h4.8l-.7 3.9 2 2.1h-7.2l2-2.1Z" />
+          <line x1="0" y1="1.2" x2="0" y2="5.6" />
         </g>
-      ))}
+      )}
     </g>
   );
 }
@@ -747,31 +1058,54 @@ function Boxes({
   openId,
   visible,
   onToggle,
+  arrange,
 }: {
   placed: PlacedBox[];
   contents: Map<string, Item[]>;
   openId: string | null;
   visible: boolean;
   onToggle: (id: string) => void;
+  /** Set while the owner arranges this desk: the containers standing on its top can be dragged around it. */
+  arrange?: Arrange;
 }) {
   if (placed.length === 0) return null;
   // Wallets and pouches share one size for what sticks out of them, set by the smallest of them,
   // so a card looks the same size whichever of them it comes from.
   const small = placed.filter((p) => p.c.type === "Wallet" || p.c.type === "Pouch");
   const sharedPeek = small.length > 0 ? peekSizeFor(Math.min(...small.map((p) => p.w))) : undefined;
+  // The one being dragged is drawn last, in front of the rest.
+  const ordered = arrange?.liftedId
+    ? [...placed.filter((p) => p.c.id !== arrange.liftedId), ...placed.filter((p) => p.c.id === arrange.liftedId)]
+    : placed;
   return (
     <g>
-      {placed.map((p) => (
-        <Luggage
-          key={p.c.id}
-          peek={p.c.type === "Wallet" || p.c.type === "Pouch" ? sharedPeek : undefined}
-          p={p}
-          items={contents.get(p.c.id) ?? []}
-          open={openId === p.c.id || (!!p.column && openId === `stack:${p.column[0]}`)}
-          visible={visible}
-          onToggle={onToggle}
-        />
-      ))}
+      {ordered.map((p) => {
+        const luggage = (
+          <Luggage
+            peek={p.c.type === "Wallet" || p.c.type === "Pouch" ? sharedPeek : undefined}
+            p={p}
+            items={contents.get(p.c.id) ?? []}
+            open={openId === p.c.id || (!!p.column && openId === `stack:${p.column[0]}`)}
+            visible={visible}
+            onToggle={onToggle}
+          />
+        );
+        if (!arrange || !arrange.boxIds.has(p.c.id) || underDesk(p.c)) return <Fragment key={p.c.id}>{luggage}</Fragment>;
+        return (
+          <Pinnable
+            key={p.c.id}
+            arrange={arrange}
+            kind="container"
+            id={p.c.id}
+            name={p.c.name}
+            base={{ x: p.left + p.w / 2, y: p.base }}
+            badge={{ x: p.left + 2, y: p.base - p.h }}
+            pinned={hasTableSpot(p.c)}
+          >
+            {luggage}
+          </Pinnable>
+        );
+      })}
     </g>
   );
 }

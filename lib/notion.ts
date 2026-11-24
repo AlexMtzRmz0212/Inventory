@@ -69,6 +69,22 @@ function requireEnv(name: string): string {
 }
 
 /**
+ * Writes where something sits on a table: `Table X` and `Table Y`, nothing else. Never its
+ * Location or Box, so a thing can be moved around its table but not to another level.
+ * Both null clears the spot, which hands the thing back to automatic placement.
+ * Returns false when there is no token to write with (the demo world).
+ */
+export async function setTableSpot(id: string, x: number | null, y: number | null): Promise<boolean> {
+  if (!process.env.NOTION_TOKEN) return false;
+  const notion = new Client({ auth: process.env.NOTION_TOKEN });
+  await notion.pages.update({
+    page_id: id,
+    properties: { "Table X": { number: x }, "Table Y": { number: y } },
+  });
+  return true;
+}
+
+/**
  * Full inventory (public + private). Never send the result of this to the
  * browser directly: go through `getViewerInventory` in lib/inventory.ts.
  */

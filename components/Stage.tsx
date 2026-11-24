@@ -443,6 +443,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
           focusId={sceneFocusId}
           visible={sceneVisible}
           onFocus={go}
+          canArrange={isPrivate}
         />
       )}
 

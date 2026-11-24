@@ -436,6 +436,54 @@ export function deskPoint(u: number, v: number, cx: number, wide = 1): { x: numb
   return { x: cx + (u - 0.5) * 2 * half * wide * 0.9, y, scale: 0.66 + 0.34 * v };
 }
 
+/**
+ * The way back from a point on the screen to a spot on the desk top: the inverse of `deskPoint`,
+ * for a thing standing with its base at (x, y). Clamped to the top, a little in from its edges,
+ * so dropping past an edge lands near the edge and a thing can never be put anywhere that is not
+ * the desk.
+ */
+export function deskUV(x: number, y: number, cx: number, wide = 1): { u: number; v: number } {
+  const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+  const v = clamp((y - 276) / (398 - 276), 0.04, 0.96);
+  const yy = 276 + v * (398 - 276);
+  const half = 160 + (48 * (yy - 252)) / 150;
+  return { u: clamp((x - cx) / (2 * half * wide * 0.9) + 0.5, 0.06, 0.94), v };
+}
+
+/** A Table Y past 100 is on the floor under the desk, which is another level, so it is not moved from the desk top. */
+export const underDesk = (x: { tableY: number | null }) => (x.tableY ?? 0) > 100;
+
+/** A thing's spot on its desk, both null to let it go back to being placed automatically. */
+export interface SpotEdit {
+  kind: "item" | "container";
+  id: string;
+  x: number | null;
+  y: number | null;
+}
+
+/**
+ * What "pin all" and "unpin all" would change on a laid-out desk: every loose thing standing on the
+ * top that is not pinned yet gets the spot it is drawn at now, and every pinned one is let go.
+ * Things under the desk are another level and are left alone.
+ */
+export function deskSpotEdits(
+  plan: { items: PlacedItem[]; boxes: PlacedBox[] },
+  cx: number,
+  wide = 1,
+): { pin: SpotEdit[]; unpin: SpotEdit[] } {
+  const pin: SpotEdit[] = [];
+  const unpin: SpotEdit[] = [];
+  const at = (kind: SpotEdit["kind"], t: { id: string; tableX: number | null; tableY: number | null }, x: number, base: number) => {
+    if (underDesk(t)) return;
+    if (hasTableSpot(t)) return void unpin.push({ kind, id: t.id, x: null, y: null });
+    const { u, v } = deskUV(x, base, cx, wide);
+    pin.push({ kind, id: t.id, x: Math.round(u * 1000) / 10, y: Math.round(v * 1000) / 10 });
+  };
+  for (const p of plan.items) at("item", p.item, p.x, p.y + p.size / 2);
+  for (const p of plan.boxes) at("container", p.c, p.left + p.w / 2, p.base);
+  return { pin, unpin };
+}
+
 const DESK_ITEM = 34;
 /** Screens and keyboards are drawn bigger than a mouse or a cable, as they are in life. */
 const DESK_SIZE: Partial<Record<ArtKind, number>> = {

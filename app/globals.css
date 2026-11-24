@@ -306,6 +306,67 @@ input {
 .rack__item:focus-visible {
   filter: brightness(1.25) drop-shadow(0 0 4px rgba(255, 255, 255, 0.5));
 }
+/* Arranging a desk: the owner drags things to pin them to a spot on it. */
+.scene__svg.is-arranging {
+  touch-action: none;
+}
+.spotpin {
+  cursor: grab;
+}
+.spotpin .rack__item,
+.spotpin .box.is-live {
+  cursor: inherit;
+}
+.spotpin.is-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.45));
+}
+.spotpin__badge {
+  cursor: pointer;
+  outline: none;
+}
+.spotpin__badge circle {
+  fill: var(--marigold);
+  stroke: var(--deep);
+  stroke-width: 2;
+}
+.spotpin__badge path {
+  fill: var(--deep);
+  stroke: var(--deep);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+.spotpin__badge line {
+  stroke: var(--deep);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.spotpin__badge:hover circle,
+.spotpin__badge:focus-visible circle {
+  fill: var(--chalk);
+}
+.scene__arrange {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--tray-h, 0px) + 14px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px 12px;
+  max-width: calc(100% - 32px);
+}
+.scene__arrange p {
+  margin: 0;
+  padding: 3px 10px;
+  white-space: nowrap;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font: 600 12px var(--font-body);
+  color: var(--chalk-dim);
+  text-align: right;
+}
 .burst__art {
   transition: transform 0.15s;
 }
@@ -666,7 +727,7 @@ input {
   right: 0;
   bottom: 0;
   max-height: 46vh;
-  padding: 56px 16px 16px;
+  padding: 28px 16px 10px;
   overflow-y: auto;
   background: linear-gradient(to top, rgba(8, 21, 34, 0.95) 45%, rgba(8, 21, 34, 0));
   transition: opacity 0.4s, transform 0.4s;
@@ -684,7 +745,7 @@ input {
 }
 .tray__title {
   margin: 0;
-  font: 600 clamp(18px, 3.2vw, 26px) / 1.2 var(--font-display);
+  font: 600 clamp(17px, 2.6vw, 22px) / 1.2 var(--font-display);
 }
 .tray__total {
   margin: 0;
@@ -693,8 +754,8 @@ input {
 .tray__cats {
   display: flex;
   gap: 22px;
-  margin: 14px 0 0;
-  padding: 0 0 4px;
+  margin: 8px 0 0;
+  padding: 0 0 2px;
   list-style: none;
   overflow-x: auto;
 }
