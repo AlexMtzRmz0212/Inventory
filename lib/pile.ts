@@ -1,4 +1,4 @@
-import { artKind } from "./item-art";
+import { artKind, isTransitCard } from "./item-art";
 import type { Item } from "./types";
 
 /** Things of one kind that an open container shows stacked in one pile instead of one slot each. */
@@ -6,7 +6,7 @@ export interface Pile {
   /** Starts with "pile:", so it can stand in for the pile as an item. */
   id: string;
   label: string;
-  kind: "books" | "cards" | "ine" | "passports";
+  kind: "books" | "cards" | "transit" | "library" | "health" | "licences" | "ine" | "passports";
   items: Item[];
 }
 
@@ -16,6 +16,10 @@ const RULES: { kind: Pile["kind"]; label: string; test: (i: Item) => boolean }[]
   // Books with no cover picture (a set of manuals, say); ones with a cover stay on their own.
   { kind: "books", label: "Books", test: (i) => artKind(i) === "book" && !i.cover },
   { kind: "cards", label: "Credit and debit cards", test: (i) => artKind(i) === "card" && /credit|debit/i.test(i.name) },
+  { kind: "transit", label: "Bus cards", test: isTransitCard },
+  { kind: "library", label: "Library and student cards", test: (i) => artKind(i) === "card" && /library|student/i.test(i.name) },
+  { kind: "health", label: "Health and dental cards", test: (i) => artKind(i) === "card" && /health|dental/i.test(i.name) },
+  { kind: "licences", label: "Driver's licences", test: (i) => artKind(i) === "card" && /driver|licen[cs]e/i.test(i.name) },
   { kind: "ine", label: "INE cards", test: (i) => /\bine\b/i.test(i.name) },
   { kind: "passports", label: "Passports", test: (i) => artKind(i) === "passport" },
 ];
@@ -49,5 +53,7 @@ export function pileStub(p: Pile, boxId: string): Item {
     cover: null,
     tableX: null,
     tableY: null,
+    closetSpot: null,
+    favorite: false,
   };
 }

@@ -24,14 +24,18 @@ export function Search({
   idx,
   onGo,
   onClose,
+  initialFavorites = false,
 }: {
   inventory: Inventory;
   idx: PlaceIndex;
   /** Fly to the place an item is in. */
   onGo: (placeId: string) => void;
   onClose: () => void;
+  /** Open showing only the favorites. */
+  initialFavorites?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const [onlyFavs, setOnlyFavs] = useState(initialFavorites);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,15 +55,23 @@ export function Search({
   const { tree, count } = useMemo(() => {
     const terms = fold(query).split(/\s+/).filter(Boolean);
     const root: Node = { name: "", kids: new Map(), items: [] };
-    if (terms.length === 0) return { tree: root, count: 0 };
+    // With no words typed, nothing is listed, unless it is the favorites that are asked for.
+    if (terms.length === 0 && !onlyFavs) return { tree: root, count: 0 };
     const hits = inventory.items.filter((i) => {
-      const text = fold(`${i.name} ${i.notes} ${i.category ?? ""} ${i.color ?? ""}`);
+      if (onlyFavs && !i.favorite) return false;
+      const text = fold(`${i.name} ${i.notes} ${i.category ?? ""} ${i.color ?? ""} ${i.closetSpot ?? ""}`);
       return terms.every((t) => text.includes(t));
     });
     for (const item of hits.slice(0, MAX_RESULTS)) {
       const path: { key: string; name: string }[] = chainTo(idx, item.locationId).map((p) => ({ key: p.id, name: p.name }));
       const box = item.boxId ? containers.get(item.boxId) : undefined;
       if (box) path.push({ key: `box:${box.id}`, name: box.name });
+      else if (item.closetSpot) {
+        path.push({
+          key: `spot:${item.locationId}:${item.closetSpot}`,
+          name: item.closetSpot === "Hook" ? "On a hook" : "In a drawer",
+        });
+      }
       if (path.length === 0) path.push({ key: "none", name: "No place yet" });
       let node = root;
       for (const step of path) {
@@ -73,7 +85,7 @@ export function Search({
       node.items.push(item);
     }
     return { tree: root, count: hits.length };
-  }, [query, inventory.items, containers, idx]);
+  }, [query, onlyFavs, inventory.items, containers, idx]);
 
   const renderNode = (n: Node): React.ReactNode => (
     <ul className="search__tree">
@@ -94,6 +106,11 @@ export function Search({
               if (i.locationId) onGo(i.locationId);
             }}
           >
+            {i.favorite && (
+              <span className="search__star" role="img" aria-label="Favorite">
+                ★
+              </span>
+            )}
             {i.name}
             {i.category && <small>{i.category}</small>}
           </button>
@@ -114,11 +131,18 @@ export function Search({
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search items"
         />
+        <div className="search__bar">
+          <button type="button" className="search__chip" aria-pressed={onlyFavs} onClick={() => setOnlyFavs((v) => !v)}>
+            <span aria-hidden="true">★</span> Favorites only
+          </button>
+        </div>
         <div className="search__results">
-          {query.trim() === "" ? (
+          {query.trim() === "" && !onlyFavs ? (
             <p className="search__hint">Type a name, a note or a category. Each result shows where it is.</p>
           ) : count === 0 ? (
-            <p className="search__hint">Nothing matches.</p>
+            <p className="search__hint">
+              {onlyFavs && query.trim() === "" ? "No favorites yet. Open an item and press its star." : "Nothing matches."}
+            </p>
           ) : (
             <>
               <p className="search__hint">

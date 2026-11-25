@@ -2,7 +2,7 @@
 
 import { updateTag } from "next/cache";
 import { isOwner } from "@/lib/auth";
-import { INVENTORY_TAG, getInventory, setTableSpot } from "@/lib/notion";
+import { INVENTORY_TAG, getInventory, setFavoriteFlag, setTableSpot } from "@/lib/notion";
 import { furnitureKind, underDesk } from "@/lib/scene";
 import type { Inventory } from "@/lib/types";
 
@@ -58,6 +58,19 @@ export async function setDeskSpot(
   const persisted = await setTableSpot(id, pin ? spot(x) : null, pin ? spot(y) : null);
   updateTag(INVENTORY_TAG);
   return { ok: true, persisted };
+}
+
+/**
+ * Owner only: mark an item as a favorite, or take the mark off. Only the item's `Favorite`
+ * checkbox is written, and only for an item that exists.
+ */
+export async function setFavorite(id: string, favorite: boolean): Promise<{ ok: boolean }> {
+  if (!(await isOwner())) return { ok: false };
+  if (typeof id !== "string" || typeof favorite !== "boolean") return { ok: false };
+  if (!(await getInventory()).items.some((i) => i.id === id)) return { ok: false };
+  await setFavoriteFlag(id, favorite);
+  updateTag(INVENTORY_TAG);
+  return { ok: true };
 }
 
 /** Most things changed in one go: far more than fits on a desk, and a bound on the writes one call can make. */

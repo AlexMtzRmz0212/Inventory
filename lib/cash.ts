@@ -111,6 +111,8 @@ export function cashStubs(boxId: string): Item[] {
     cover: null,
     tableX: null,
     tableY: null,
+    closetSpot: null,
+    favorite: false,
   });
   return [stub(CASH_ART, "Cash"), stub(CASH_SUM, "Cash total")];
 }

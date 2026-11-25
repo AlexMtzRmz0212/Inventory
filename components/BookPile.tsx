@@ -9,7 +9,7 @@ const MAX_SHOWN = 8;
 /** A pile of things stacked up in the open container, with how many there are. Centered on (0, 0). */
 export function PileArt({ pile, size }: { pile: Pile; size: number }) {
   const n = pile.items.length;
-  const badge = Math.max(8, size * 0.17);
+  const badge = Math.max(6, size * 0.12);
 
   if (pile.kind === "books") {
     // Books lying flat in one stack, each a little off from the one below.
@@ -32,7 +32,7 @@ export function PileArt({ pile, size }: { pile: Pile; size: number }) {
           );
         })}
         <circle className="tile__badge" cx={w / 2 + 4} cy={-total / 2 - 2} r={badge} />
-        <text className="tile__count" x={w / 2 + 4} y={-total / 2 - 2 + size * 0.06} style={{ fontSize: size * 0.17 }}>
+        <text className="tile__count" x={w / 2 + 4} y={-total / 2 - 2 + size * 0.06} style={{ fontSize: size * 0.12 }}>
           {n}
         </text>
       </g>
@@ -52,7 +52,7 @@ export function PileArt({ pile, size }: { pile: Pile; size: number }) {
         </g>
       ))}
       <circle className="tile__badge" cx={size * 0.4} cy={-size * 0.36} r={badge} />
-      <text className="tile__count" x={size * 0.4} y={-size * 0.36 + size * 0.06} style={{ fontSize: size * 0.17 }}>
+      <text className="tile__count" x={size * 0.4} y={-size * 0.36 + size * 0.06} style={{ fontSize: size * 0.12 }}>
         {n}
       </text>
     </g>

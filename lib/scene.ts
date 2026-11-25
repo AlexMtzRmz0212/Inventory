@@ -105,6 +105,8 @@ export interface Group {
   items: Item[];
   /** True when several items are stacked into one pile. */
   pile: boolean;
+  /** Show each item drawn next to its name in the list (things folded in a drawer). */
+  art?: boolean;
 }
 
 export const MAX_INDIVIDUAL = 8;
@@ -492,13 +494,15 @@ const DESK_SIZE: Partial<Record<ArtKind, number>> = {
   laptop: 2.6,
   keyboard: 1.5,
   tablet: 1.2,
-  lamp: 1.2,
+  lamp: 1.55,
   console: 1.2,
   coolbase: 1.2,
 };
 const BIG_KINDS = new Set<ArtKind>(["tv", "monitor", "laptop"]);
 /** Scene units per centimeter for containers on the desk: a wallet is drawn smaller than a pouch. */
 const DESK_CM: Record<string, number> = { Wallet: 3, Pouch: 3.4 };
+/** How much of its length a pouch is drawn across on a desk. */
+const POUCH_SLIM = 0.72;
 
 
 /** Least gap, in scene units, kept between two things on the desk. */
@@ -529,7 +533,10 @@ export function deskLayout(
     for (const c of boxes) {
       const [u, v] = hasTableSpot(c) ? [(c.tableX ?? 0) / 100, (c.tableY ?? 0) / 100] : [0.14 + 0.15 * spare++, 0.86];
       const p = deskPoint(u, v, cx, wide);
-      const { w, h } = containerSize(c, (DESK_CM[c.type ?? ""] ?? 3) * p.scale * m);
+      const size = containerSize(c, (DESK_CM[c.type ?? ""] ?? 3) * p.scale * m);
+      // A pouch is drawn a little slimmer than its length says, so it does not crowd what is beside it.
+      const w = c.type === "Pouch" ? size.w * POUCH_SLIM : size.w;
+      const h = size.h;
       placedBoxes.push({ c, left: p.x - w / 2, w, h, base: p.y });
       // Room above as well, for the things sticking out of it.
       taken.push({ x: p.x, y: p.y - h / 2 - 8, r: Math.max(w, h) / 2 + 8 });
@@ -585,3 +592,60 @@ export function deskLayout(
   }
   return attempt(0.5, true) as { items: PlacedItem[]; boxes: PlacedBox[] };
 }
+
+/** Items in a closet split by where they are kept: on a hook, folded in a drawer, or standing on a shelf or the floor. */
+export function closetStorage(items: Item[]): { hooks: Item[]; drawers: Item[]; rest: Item[] } {
+  return {
+    hooks: items.filter((i) => i.closetSpot === "Hook"),
+    drawers: items.filter((i) => i.closetSpot === "Drawer"),
+    rest: items.filter((i) => !i.closetSpot),
+  };
+}
+
+/** Where the hook rows start (y of the first row's pegs), how far apart the rows are, and how wide the hooks spread. */
+export const HOOK_TOP = 268;
+export const HOOK_STEP = 20;
+export const HOOK_WIDTH = 212;
+
+export interface HookPlaced extends PlacedItem {
+  /** Y of the peg the item hangs from. */
+  peg: number;
+}
+
+/**
+ * Hangs items from pegs spread across the back of a closet. Neighbors hang at different heights
+ * (two rows, then three, then four as it fills up), so a coat in front of another one does not hide it,
+ * and everything shrinks a little as more are added.
+ */
+export function hookLayout(items: Item[], cx: number): HookPlaced[] {
+  const sorted = groupedItems(items);
+  const n = sorted.length;
+  if (n === 0) return [];
+  const rows = Math.min(4, Math.max(2, Math.ceil(n / 5)));
+  const size = Math.max(24, Math.min(46, (rows * HOOK_WIDTH) / n / 1.05));
+  const pitch = HOOK_WIDTH / n;
+  return sorted.map((item, i) => {
+    const peg = HOOK_TOP + (i % rows) * HOOK_STEP;
+    return { item, x: cx + (i - (n - 1) / 2) * pitch, y: peg + 4 + size * 0.4, size, peg };
+  });
+}
+
+export const DRAWER_LABELS = ["Tops", "Bottoms", "Other"] as const;
+export type DrawerLabel = (typeof DRAWER_LABELS)[number];
+
+const TOPS = new Set<ArtKind>(["tee", "teeLong", "polo", "poloLong", "dress", "dressLong", "sweater", "jersey", "vest", "blazer", "jacket"]);
+const BOTTOMS = new Set<ArtKind>(["pants", "shorts", "sportShorts", "swim"]);
+
+/** Which drawer a folded item goes in: shirts and the like on top, trousers and shorts below, the rest last. */
+export function drawerOf(item: Item): DrawerLabel {
+  const kind = artKind(item);
+  return TOPS.has(kind) ? "Tops" : BOTTOMS.has(kind) ? "Bottoms" : "Other";
+}
+
+/** The three drawers of a closet's chest, each with what is folded in it (an empty one still has its front). */
+export function drawerGroups(items: Item[]): { label: DrawerLabel; items: Item[] }[] {
+  return DRAWER_LABELS.map((label) => ({ label, items: groupedItems(items.filter((i) => drawerOf(i) === label)) }));
+}
+
+/** The chest of drawers on a closet's floor: its left edge from the closet's center, its width, and where its stack of drawers sits. */
+export const DRAWER_CHEST = { dx: 6, width: 104, top: 452, bottom: 560 } as const;

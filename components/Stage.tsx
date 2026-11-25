@@ -1,8 +1,9 @@
 "use client";
 
 import { animate } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
+import { setFavorite } from "@/app/actions/inventory";
 import {
   arcPath,
   arcPoint,
@@ -90,7 +91,51 @@ function viewBoxOf(c: Cam, aspect = 16 / 9): string {
 const zoomOfWidth = (w: number) =>
   w >= 800 ? "world" : w >= 280 ? "continent" : w >= 100 ? "country" : w >= 30 ? "city" : "site";
 
-export default function Stage({ inventory, map, isPrivate }: Props) {
+export default function Stage({ inventory: base, map, isPrivate }: Props) {
+  // Favorites the owner has just marked, shown at once while they are saved.
+  const [favs, setFavs] = useState<Record<string, boolean>>({});
+  const [favNote, setFavNote] = useState<string | null>(null);
+  const [, startFav] = useTransition();
+  // Once what was saved comes back with the next page, the mark has done its job.
+  const [seen, setSeen] = useState(base);
+  if (seen !== base) {
+    setSeen(base);
+    setFavs((o) => {
+      const kept: Record<string, boolean> = {};
+      for (const i of base.items) if (i.id in o && o[i.id] !== i.favorite) kept[i.id] = o[i.id];
+      return kept;
+    });
+  }
+  const inventory = useMemo(
+    () =>
+      Object.keys(favs).length === 0
+        ? base
+        : { ...base, items: base.items.map((i) => (i.id in favs ? { ...i, favorite: favs[i.id] } : i)) },
+    [base, favs],
+  );
+  /** Marks an item as a favorite, or takes the mark off. Only its Favorite checkbox is saved. */
+  const toggleFavorite = useCallback((id: string, value: boolean) => {
+    setFavNote(null);
+    setFavs((o) => ({ ...o, [id]: value }));
+    startFav(async () => {
+      let ok = false;
+      try {
+        ok = (await setFavorite(id, value)).ok;
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        setFavs((o) => {
+          const rest = { ...o };
+          delete rest[id];
+          return rest;
+        });
+        setFavNote("Couldn't save that favorite.");
+      }
+    });
+  }, []);
+  const favCount = useMemo(() => inventory.items.filter((i) => i.favorite).length, [inventory]);
+
   const idx = useMemo(() => indexPlaces(inventory.places), [inventory.places]);
   // The owner starts on their home continent; visitors, and an owner with no such place, on the world.
   const [start] = useState(() => {
@@ -106,6 +151,8 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
   const [catMenu, setCatMenu] = useState<{ cat: string | null; at: string | null } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  /** Whether the search opens showing only favorites. */
+  const [searchFavs, setSearchFavs] = useState(false);
   const menuOpen = catMenu !== null && catMenu.at === focusId;
   /** The room that is mounted; it stays mounted while fading out on the way to another place. */
   const [sceneSiteId, setSceneSiteId] = useState<string | null>(
@@ -278,6 +325,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
     const onFind = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
+        setSearchFavs(false);
         setSearchOpen(true);
       }
     };
@@ -444,6 +492,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
           visible={sceneVisible}
           onFocus={go}
           canArrange={isPrivate}
+          onFavorite={isPrivate ? toggleFavorite : undefined}
         />
       )}
 
@@ -498,13 +547,35 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
           </ol>
         </nav>
         <div className="topbar__right">
-          <button type="button" className="btn btn--ghost topbar-btn" onClick={() => setSearchOpen(true)} title="Search (Ctrl F)">
+          <button
+            type="button"
+            className="btn btn--ghost topbar-btn"
+            onClick={() => {
+              setSearchFavs(false);
+              setSearchOpen(true);
+            }}
+            title="Search (Ctrl F)"
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
               <circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
               <path d="m9.2 9.2 3.3 3.3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
             Search
           </button>
+          {(isPrivate || favCount > 0) && (
+            <button
+              type="button"
+              className="btn btn--ghost topbar-btn"
+              onClick={() => {
+                setSearchFavs(true);
+                setSearchOpen(true);
+              }}
+              title="Favorites"
+            >
+              <span aria-hidden="true">★</span>
+              Favorites{favCount > 0 ? ` ${favCount}` : ""}
+            </button>
+          )}
           {!isPrivate && tour.status === "idle" && steps.length > 2 && (
             <button type="button" className="btn btn--ghost topbar-btn" onClick={tour.play}>
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -550,7 +621,7 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
       )}
 
       {searchOpen && (
-        <Search inventory={inventory} idx={idx} onGo={go} onClose={() => setSearchOpen(false)} />
+        <Search inventory={inventory} idx={idx} onGo={go} onClose={() => setSearchOpen(false)} initialFavorites={searchFavs} />
       )}
 
       {menuOpen && (
@@ -576,6 +647,12 @@ export default function Stage({ inventory, map, isPrivate }: Props) {
             ))}
           </ul>
         </div>
+      )}
+
+      {favNote && (
+        <p className="favnote" role="status">
+          {favNote}
+        </p>
       )}
 
       <section ref={trayRef} className="tray" aria-live="polite">

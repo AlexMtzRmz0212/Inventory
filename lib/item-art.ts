@@ -66,6 +66,7 @@ export type ArtKind =
   | "monitor"
   | "kindle"
   | "earbuds"
+  | "earphones"
   | "thermometer"
   | "lamp"
   | "scratcher"
@@ -103,6 +104,8 @@ const BY_NAME: [RegExp, ArtKind][] = [
   [/hard drive|\bdrive\b|\bssd\b|\bhdd\b/i, "drive"],
   [/\bhub\b/i, "hub"],
   [/headset|headphone/i, "headset"],
+  // Cheap "wireless" earbuds are two earphones joined by a cable with a small Bluetooth receiver on it, not a pair in a case.
+  [/generic.*(earbud|earphone)/i, "earphones"],
   [/earbud|earphone|airpod/i, "earbuds"],
   [/\bwatch\b(?!.*charger)/i, "watch"],
   [/eye mask|sleep mask/i, "mask"],
@@ -139,7 +142,7 @@ const BY_NAME: [RegExp, ArtKind][] = [
   [/coat|jacket|hoodie|parka/i, "jacket"],
   [/scarf/i, "scarf"],
   [/jersey/i, "jersey"],
-  [/sweater|sweatshirt/i, "sweater"],
+  [/sweater|sweatshirt|pullover/i, "sweater"],
   [/\bpolo\b/i, "polo"],
   [/dress shirt/i, "dress"],
   [/mug|cup|teapot|tea set|coffee/i, "mug"],
@@ -150,7 +153,11 @@ const BY_NAME: [RegExp, ArtKind][] = [
 ];
 
 /** Cards with a photo and lines of text (IDs, licences, visas, health and library cards) versus bank and transit cards with a chip. */
-const ID_CARD = /licen[cs]e|\bine\b|\bvisa\b|health|student|dental|library|\bid\b/i;
+/** Bus, train and metro passes: drawn with a bus and the contactless waves, not a chip, so they do not read as a credit card. */
+const TRANSIT_CARD = /presto|transit|bus (card|pass)|metro|subway|\bopus\b|oyster|\bttc\b|compass|clipper|ventra|suica|go card/i;
+export const isTransitCard = (item: ItemLike) => artKind(item) === "card" && TRANSIT_CARD.test(item.name);
+
+const ID_CARD =/licen[cs]e|\bine\b|\bvisa\b|health|student|dental|library|\bid\b/i;
 
 const BY_CATEGORY: Record<string, ArtKind> = {
   Clothes: "tee",
@@ -213,6 +220,7 @@ const COLOR_WORDS: [string, string][] = [
   ["light blue", "#bfe3fa"],
   ["dark blue", "#2f56b0"],
   ["fluorescent green", "#39f06a"],
+  ["bright green", "#4be07a"],
   ["dark yellow", "#c79a1e"],
   ["taupe", "#6f655c"],
   ["white", "#eef2f5"],
@@ -261,6 +269,8 @@ const KIND_DEFAULT: Partial<Record<ArtKind, string>> = {
   coolbase: "#8fa3b8",
   tablet: "#4b5568",
   mouse: "#6b7683",
+  headset: "#2f3745",
+  earphones: "#6b7683",
   keyboard: "#4b5568",
   card: "#8a96a6",
   keychain: "#d9b45a",
@@ -305,7 +315,7 @@ export interface ArtSpec {
   /** Bills: which note this is, for its color and the number on it. */
   bill: Bill | null;
   /** Cards: with a photo (ID) or with a chip (bank, transit). */
-  card: "id" | "bank" | null;
+  card: "id" | "bank" | "transit" | null;
   /** Cables: both ends USB-C ("cc") or a USB-A end and a USB-C end ("ac"). */
   cable: "ac" | "cc" | null;
   /** Cables: the color inside the USB-A plug, from "(blue port)" in the name. */
@@ -348,7 +358,7 @@ export function artOf(item: ItemLike): ArtSpec {
   return {
     kind,
     bill: kind === "bill" ? billOf(item) : null,
-    card: kind === "card" ? (ID_CARD.test(item.name) ? "id" : "bank") : null,
+    card: kind === "card" ? (TRANSIT_CARD.test(item.name) ? "transit" : ID_CARD.test(item.name) ? "id" : "bank") : null,
     pair: kind === "pillow" && /x2|two|pair/i.test(item.name),
     cable: kind === "usbcable" ? (/\bc[- ]?(to|-)[- ]?c\b/i.test(item.name) ? "cc" : "ac") : null,
     port: PORT_COLORS[/\b(\w+) port\b/i.exec(item.name)?.[1]?.toLowerCase() ?? ""] ?? null,

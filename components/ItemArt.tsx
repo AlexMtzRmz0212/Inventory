@@ -458,6 +458,16 @@ const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
       <path d="M5 33h24" fill="none" stroke={shade} />
     </>
   ),
+  // Earphones joined by a cable that hangs in a loop, with a small Bluetooth receiver on it.
+  earphones: ({ fill, shade, light }) => (
+    <>
+      <Rod d="M12 13C12 34 15 40 24 40S36 34 36 13" w={1.8} color={shade} />
+      <circle cx="12" cy="10" r="4.6" fill="#eef2f5" />
+      <circle cx="36" cy="10" r="4.6" fill="#eef2f5" />
+      <rect x="18" y="35" width="12" height="9" rx="3" fill={fill} />
+      <circle cx="24" cy="39.500" r="1.600" fill={light} stroke="none" />
+    </>
+  ),
   // A room thermometer: a square body with a display and a small sensor dot.
   thermometer: ({ fill, shade, light }) => (
     <>
@@ -554,6 +564,16 @@ const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
             <circle cx="12" cy="25.4" r="2.6" fill={shade} stroke="none" />
             <path d="M7.6 34.5c0-3.2 2-4.8 4.4-4.8s4.4 1.6 4.4 4.8Z" fill={shade} stroke="none" />
             <path d="M22 23.5h19M22 28h19M22 32.5h12" fill="none" stroke={ink} strokeWidth="1.8" />
+          </>
+        ) : spec.card === "transit" ? (
+          <>
+            {/* A transit pass: a bus on the left and the contactless waves on the right, in the second color when there is one. */}
+            <rect x="6" y="16" width="19" height="14" rx="3" fill={spec.accent ?? ink} stroke="none" />
+            <rect x="8.5" y="18.5" width="14" height="5.5" rx="1" fill={fill} stroke="none" />
+            <path d="M15.500 18.500v5.500" fill="none" stroke={spec.accent ?? ink} strokeWidth="1.2" />
+            <circle cx="11" cy="31" r="2.3" fill={spec.accent ?? ink} stroke={fill} strokeWidth="1.2" />
+            <circle cx="20" cy="31" r="2.3" fill={spec.accent ?? ink} stroke={fill} strokeWidth="1.2" />
+            <path d="M32 20q2.600 4 0 8M36 17.500q4.500 6.500 0 13M40 15q6 9 0 18" fill="none" stroke={spec.accent ?? ink} strokeWidth="2" strokeLinecap="round" />
           </>
         ) : (
           <>

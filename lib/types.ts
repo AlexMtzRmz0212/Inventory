@@ -31,7 +31,13 @@ export interface Item {
   tableX: number | null;
   /** Where it sits on a table: 0 is the back edge, 100 the front. */
   tableY: number | null;
+  /** In a closet: hung on a hook or folded in a drawer. Empty means it stands on a shelf or the floor. */
+  closetSpot: ClosetSpot | null;
+  /** Marked as a favorite. */
+  favorite: boolean;
 }
+
+export type ClosetSpot = "Hook" | "Drawer";
 
 export interface Container {
   id: string;

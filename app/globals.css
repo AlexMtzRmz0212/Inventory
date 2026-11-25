@@ -993,3 +993,111 @@ input {
   color: var(--chalk-dim);
   font-size: 12px;
 }
+
+/* Favorites: a gold star on the thing, a toggle in its card, and a filter in search */
+.favmark path {
+  fill: var(--marigold);
+  stroke: var(--deep);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.fav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  margin: 0 0 10px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--chalk);
+  font: 600 13px var(--font-body);
+  cursor: pointer;
+}
+.fav[aria-pressed="true"] {
+  border-color: var(--marigold);
+  color: var(--marigold);
+}
+.fav:hover,
+.fav:focus-visible {
+  border-color: var(--marigold);
+}
+.fav--static {
+  cursor: default;
+  border-color: var(--marigold);
+  color: var(--marigold);
+}
+.fav--compact {
+  flex: none;
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+.fav--compact.fav--static {
+  border-color: transparent;
+}
+/* A drawer in a closet's chest: press one to see what is folded in it */
+.drawer.is-live {
+  cursor: pointer;
+  outline: none;
+}
+.drawer.is-live:hover,
+.drawer.is-live:focus-visible {
+  filter: brightness(1.14);
+}
+.drawer__label {
+  font: 700 9px var(--font-body);
+  fill: var(--deep);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.scene__pop .scene__pop-art li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.scene__pop .scene__pop-art li > span {
+  flex: 1;
+  min-width: 0;
+}
+.scene__pop-art svg {
+  flex: none;
+  overflow: visible;
+}
+
+.search__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 0;
+}
+.search__chip {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--chalk-dim);
+  font: 600 13px var(--font-body);
+  cursor: pointer;
+}
+.search__chip[aria-pressed="true"] {
+  border-color: var(--marigold);
+  color: var(--marigold);
+}
+.search__star {
+  color: var(--marigold);
+}
+.favnote {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 14px;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font: 600 13px var(--font-body);
+  color: var(--chalk);
+}

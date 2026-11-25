@@ -17,25 +17,30 @@ import {
   splitCash,
   type CashGroup,
 } from "@/lib/cash";
-import { artKind, artOf } from "@/lib/item-art";
+import { artKind, artOf, type ArtKind } from "@/lib/item-art";
 import type { PlaceIndex } from "@/lib/places";
 import {
   BASE_Y,
   BURST_ITEM,
+  DRAWER_CHEST,
   FLOOR_BOX_Y,
   FLOOR_ITEMS_Y,
   FLOOR_Y,
   FURNITURE_WIDTH,
+  HOOK_WIDTH,
   MAX_INDIVIDUAL,
   SCENE_H,
   SCENE_W,
   burstPlan,
+  closetStorage,
   deskLayout,
   deskPoint,
   deskSpotEdits,
   deskUV,
   deskWidth,
+  drawerGroups,
   hasTableSpot,
+  hookLayout,
   lineupPlan,
   containerAccent,
   containerColor,
@@ -51,6 +56,7 @@ import {
   type BurstPlan,
   type Furniture,
   type Group,
+  type HookPlaced,
   type Level,
   type LineupPlan,
   type PlacedBox,
@@ -76,6 +82,8 @@ interface Props {
   onFocus: (id: string) => void;
   /** The owner may pin things to spots on a desk by dragging them. */
   canArrange?: boolean;
+  /** The owner may mark an item as a favorite, or take the mark off. */
+  onFavorite?: (id: string, favorite: boolean) => void;
 }
 
 /** Where a thing sits on its desk, 0 to 100 each way; both null is "wherever there is room". */
@@ -120,7 +128,7 @@ const LEVELS: Record<Furniture, Level[]> = {
     { y: 301, width: 205, scale: 0.58 },
   ],
   closet: [
-    { y: 382, width: 210, scale: 1 },
+    { y: 418, width: 210, scale: 1 },
     { y: 312, width: 210, scale: 1 },
   ],
   shelf: [
@@ -137,7 +145,7 @@ const LEVELS: Record<Furniture, Level[]> = {
 };
 
 /** Where a closet's shelf is: the top of the plank things stand on. */
-const CLOSET_SHELF_Y = 382;
+const CLOSET_SHELF_Y = 418;
 /** The top plank of a closet, above the middle shelf; things on it stand on its top edge. */
 const CLOSET_TOP_Y = 252;
 /** In a closet, a Table Y under this puts a thing on the top shelf (Table X is left to right along it). */
@@ -163,7 +171,7 @@ function onKey(e: KeyboardEvent, fn: () => void) {
   }
 }
 
-export default function RoomScene({ site, idx, inventory: base, tint, focusId, visible, onFocus, canArrange = false }: Props) {
+export default function RoomScene({ site, idx, inventory: base, tint, focusId, visible, onFocus, canArrange = false, onFavorite }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const aspectRef = useRef(16 / 9);
@@ -191,6 +199,8 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
     });
   }
   const inventory = useMemo(() => withSpots(base, pins), [base, pins]);
+  /** Which items are favorites right now, for the ones in an open list that was taken before the mark changed. */
+  const favOf = useMemo(() => new Map(inventory.items.map((i) => [i.id, i.favorite])), [inventory]);
   /** The desk being arranged (a spot id), the thing being dragged, and a message when a save fails. */
   const [arrangeFor, setArrangeFor] = useState<string | null>(null);
   const [liftedId, setLiftedId] = useState<string | null>(null);
@@ -300,13 +310,30 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
   const shelfBoxes = spots.map((spot, i) =>
     kinds[i] === "closet" ? boxesAt(spot.id).filter((c) => c.type === "Cardboard box") : [],
   );
+  // In a closet, clothes on a hook hang across the back and clothes in a drawer are folded in the chest
+  // on the floor; only what is kept in neither stands around on the shelf and floor.
+  const closetStores = spots.map((spot, i) =>
+    kinds[i] === "closet" ? closetStorage(itemsAt(spot.id)) : null,
+  );
+  const hookPlans: (HookPlaced[] | null)[] = spots.map((_, i) => {
+    const hooks = closetStores[i]?.hooks ?? [];
+    return hooks.length > 0 ? hookLayout(hooks, xs[i]) : null;
+  });
+  const chestOn = closetStores.map((s) => (s?.drawers.length ?? 0) > 0);
+  /** Where loose things in a closet stand: its shelf rows, or just the floor once hooks hang where the upper row would be. */
+  const closetLevels = (i: number): Level[] => {
+    if (hookPlans[i]) return [{ y: BASE_Y - 10, width: chestOn[i] ? 96 : 200, scale: 1 }];
+    return shelfBoxes[i].length > 0 ? LEVELS.closet.slice(1) : LEVELS.closet;
+  };
+  // With a chest of drawers on the right of the floor, what stands on the floor keeps to the left of it.
+  const closetX = (i: number) => (chestOn[i] ? xs[i] - 58 : xs[i]);
   // Things on a closet's top shelf stand along it where their Table X says; the rest go on the usual rows.
   const closetPlans = spots.map((spot, i) => {
     if (kinds[i] !== "closet") return undefined;
-    const loose = itemsAt(spot.id);
+    const loose = closetStores[i]?.rest ?? [];
     const top = loose.filter(onTopShelf);
     if (top.length === 0) return undefined;
-    const levels = shelfBoxes[i].length > 0 ? LEVELS.closet.slice(1) : LEVELS.closet;
+    const levels = closetLevels(i);
     const size = 38;
     const onShelf = top.map((item) => ({
       item,
@@ -314,12 +341,15 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
       y: CLOSET_TOP_Y - size / 2,
       size,
     }));
-    return [...placeOnLevels(loose.filter((it) => !onTopShelf(it)), levels, xs[i]), ...onShelf].sort((a, b) => a.y - b.y);
+    return [...placeOnLevels(loose.filter((it) => !onTopShelf(it)), levels, closetX(i)), ...onShelf].sort((a, b) => a.y - b.y);
   });
   const spotBoxes = spots.map((spot, i) => {
     const kind = furnitureKind(spot.name);
     const here = boxesAt(spot.id);
     const plan = deskPlans[i];
+    // Luggage on a closet floor keeps to the left of its chest of drawers, when it has one.
+    const floorX = kind === "closet" ? closetX(i) : xs[i];
+    const floorW = kind === "closet" && chestOn[i] ? 100 : FURNITURE_WIDTH[kind] - 50;
     if (plan) {
       const onTop = new Set(plan.boxes.map((p) => p.c.id));
       return [
@@ -330,24 +360,55 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
     if (shelfBoxes[i].length > 0) {
       const onShelf = new Set(shelfBoxes[i].map((c) => c.id));
       return [
-        ...layoutBoxes(shelfBoxes[i], xs[i], CLOSET_SHELF_Y, 200, hasItems, 2.2),
+        ...layoutBoxes(shelfBoxes[i], xs[i], CLOSET_SHELF_Y, 200, hasItems, 1.5),
         // The rest keep their life size on the floor, as they did beside the boxes.
-        ...layoutBoxes(here.filter((c) => !onShelf.has(c.id)), xs[i], BASE_Y - 6, FURNITURE_WIDTH[kind] - 50, hasItems, 1.5),
+        ...layoutBoxes(here.filter((c) => !onShelf.has(c.id)), floorX, BASE_Y - 6, floorW, hasItems, 1.5),
       ];
     }
     // A wallet is small enough to sit on top of the furniture instead of standing on the floor in front of it.
     const small = here.filter((c) => c.type === "Wallet");
     return [
-      ...layoutBoxes(here.filter((c) => c.type !== "Wallet"), xs[i], BASE_Y - 6, FURNITURE_WIDTH[kind] - 50, hasItems),
+      ...layoutBoxes(here.filter((c) => c.type !== "Wallet"), floorX, BASE_Y - 6, floorW, hasItems),
       ...layoutBoxes(small, xs[i] + 150, LEVELS[kind][0].y - 4, 90, hasItems, 4.5),
     ];
   });
   const floorBoxes = layoutBoxes(boxesAt(site.id), SCENE_W / 2, FLOOR_BOX_Y, rackOn ? 480 : 1100, hasItems);
   const placedBoxes = [...spotBoxes.flat(), ...floorBoxes];
+  // Each drawer with something in it opens like a container: it is laid out here as one, and what is
+  // folded in it comes out of it above the room.
+  const drawerBoxes: PlacedBox[] = [];
+  const drawerContents = new Map<string, Item[]>();
+  spots.forEach((spot, i) => {
+    if (!chestOn[i]) return;
+    const { dx, width, top, bottom } = DRAWER_CHEST;
+    const groups = drawerGroups(closetStores[i]?.drawers ?? []);
+    const h = (bottom - top) / groups.length;
+    groups.forEach((g, k) => {
+      if (g.items.length === 0) return;
+      const id = `drawer:${spot.id}:${g.label}`;
+      const c: Container = {
+        id,
+        name: `${g.label} drawer`,
+        type: "Drawer",
+        color: null,
+        owner: null,
+        widthCm: null,
+        heightCm: null,
+        lengthCm: null,
+        volumeL: null,
+        filled: false,
+        locationId: spot.id,
+        tableX: null,
+        tableY: null,
+      };
+      drawerBoxes.push({ c, left: xs[i] + dx, w: width, h: h - 3, base: top + (k + 1) * h - 1.5 });
+      drawerContents.set(id, g.items);
+    });
+  });
   const live = visible && open && open.at === focusId ? open : null;
   const openId = live ? live.id : null;
   const stackId = live && live.id.startsWith("stack:") ? live.id.slice(6) : null;
-  const openBox = live && !stackId ? (placedBoxes.find((p) => p.c.id === live.id) ?? null) : null;
+  const openBox = live && !stackId ? ([...placedBoxes, ...drawerBoxes].find((p) => p.c.id === live.id) ?? null) : null;
   // A stack that was clicked: its containers stand up in a row so each can be told from the others.
   const stackBoxes = stackId ? placedBoxes.filter((p) => p.column?.[0] === stackId) : [];
   const lineup =
@@ -361,7 +422,7 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
       : null;
   // The open container's items, and the camera that fits them to the screen. Cash is drawn as one
   // handful with its total beside it instead of a slot for every note.
-  const rawOpen = live ? (contents.get(live.id) ?? []) : [];
+  const rawOpen = live ? (contents.get(live.id) ?? drawerContents.get(live.id) ?? []) : [];
   const openCash = splitCash(rawOpen);
   const openGroups = cashGroups(openCash.bills);
   const openPiles = splitPiles(openCash.others);
@@ -399,10 +460,12 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
     if (spotIndex >= 0 && kinds[spotIndex] === "desk") {
       // Something on the floor under the desk pulls the view back and down to include it.
       const low = deskPlans[spotIndex]?.items.some((p) => p.y > 440) ?? false;
-      const wide = deskWidth(spots[spotIndex].name);
+      const name = spots[spotIndex].name;
+      const wide = deskWidth(name);
+      // A big desk ("Large desk", "Office desk") is aimed higher, so less of its legs show and its top fills the view.
+      const big = /large|office/i.test(name);
       return {
-        // A long desk is aimed a little lower, so its front edge sits higher in the view, clear of the tray.
-        cy: (low ? 360 : 316) + (wide > 1 ? 24 : 0),
+        cy: (low ? 360 : 316) - (big ? 30 : 0),
         cx: xs[spotIndex],
         w: Math.max(330, 210 * a) * wide * (low ? 1.2 : 1),
       };
@@ -413,7 +476,8 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
     if (spotIndex >= 0 && kinds[spotIndex] === "closet") return { cx: xs[spotIndex], cy: 380, w: Math.max(500, 380 * a) };
     return spotIndex >= 0
       ? { cx: xs[spotIndex], cy: 400, w: Math.max(520, 420 * a) }
-      : { cx: SCENE_W / 2, cy: 440, w: Math.max(1100, 620 * a, span + 180) };
+      : // Mom's apartment is aimed higher, so everything sits lower in the view: less floor, more wall.
+        { cx: SCENE_W / 2, cy: /mom/i.test(site.name) ? 365 : 440, w: Math.max(1100, 620 * a, span + 180) };
   };
 
   useEffect(() => {
@@ -571,12 +635,38 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
                   {spot.name}
                 </text>
               </g>
+              {hookPlans[i] && (
+                <>
+                  <HookRack x={x} placed={hookPlans[i] ?? []} light={light} />
+                  <Standing
+                    items={[]}
+                    levels={[]}
+                    cx={x}
+                    // Lower rows hang in front of the higher ones.
+                    placed={[...(hookPlans[i] ?? [])].sort((a, b) => a.peg - b.peg)}
+                    visible={visible}
+                    onPick={pickItem}
+                  />
+                </>
+              )}
+              {chestOn[i] && (
+                <DrawerChest
+                  x={x}
+                  groups={drawerGroups(closetStores[i]?.drawers ?? [])}
+                  light={light}
+                  mid={mid}
+                  dark={dark}
+                  visible={visible}
+                  openId={openId}
+                  onPick={(label) => toggle(`drawer:${spot.id}:${label}`)}
+                />
+              )}
               <Boxes placed={spotBoxes[i]} contents={contents} openId={openId} visible={visible} onToggle={toggle} arrange={arrange} />
               <Standing
-                items={itemsAt(spot.id)}
+                items={closetStores[i]?.rest ?? itemsAt(spot.id)}
                 // With boxes on the closet shelf, loose things hang above it instead.
-                levels={shelfBoxes[i].length > 0 ? LEVELS[kind].slice(1) : LEVELS[kind]}
-                cx={kind === "desk" ? x - 40 : x}
+                levels={kind === "closet" ? closetLevels(i) : shelfBoxes[i].length > 0 ? LEVELS[kind].slice(1) : LEVELS[kind]}
+                cx={kind === "desk" ? x - 40 : kind === "closet" ? closetX(i) : x}
                 placed={deskPlans[i]?.items ?? closetPlans[i]}
                 visible={visible}
                 onPick={pickItem}
@@ -609,6 +699,11 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
             box={openBox}
             items={openItems}
             showBox
+            backdrop={
+              openBox.c.type === "Drawer" ? (
+                <DrawerOpen box={openBox} fill={mid} edge={dark} />
+              ) : undefined
+            }
             plan={burst}
             groups={openGroups}
             piles={openPiles.piles}
@@ -671,23 +766,34 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
           {cashBoxId ? (
             <CashBreakdown groups={cashGroups(splitCash(contents.get(cashBoxId) ?? []).bills)} />
           ) : showPicked.pile ? (
-            <ul>
+            <ul className={showPicked.art ? "scene__pop-art" : undefined}>
               {showPicked.items.map((i) => (
                 <li key={i.id}>
-                  {i.name}
-                  {i.fragile && <small>Fragile</small>}
-                  {i.notes && <small>{i.notes}</small>}
+                  {showPicked.art && (
+                    <svg viewBox="-26 -26 52 52" width="38" height="38" aria-hidden="true">
+                      <ItemArt spec={artOf(i)} size={48} />
+                    </svg>
+                  )}
+                  <span>
+                    {i.name}
+                    {i.fragile && <small>Fragile</small>}
+                    {i.notes && <small>{i.notes}</small>}
+                  </span>
+                  <FavButton item={i} favorite={favOf.get(i.id) ?? i.favorite} onFavorite={onFavorite} compact />
                 </li>
               ))}
             </ul>
           ) : (
-            <ul>
-              <li>
-                {showPicked.items[0].category ?? "Other"}
-                {showPicked.items[0].fragile && <small>Fragile</small>}
-                {showPicked.items[0].notes && <small>{showPicked.items[0].notes}</small>}
-              </li>
-            </ul>
+            <>
+              <ul>
+                <li>
+                  {showPicked.items[0].category ?? "Other"}
+                  {showPicked.items[0].fragile && <small>Fragile</small>}
+                  {showPicked.items[0].notes && <small>{showPicked.items[0].notes}</small>}
+                </li>
+              </ul>
+              <FavButton item={showPicked.items[0]} favorite={favOf.get(showPicked.items[0].id) ?? showPicked.items[0].favorite} onFavorite={onFavorite} />
+            </>
           )}
           <button type="button" className="btn btn--ghost" onClick={() => setPicked(null)}>
             Close
@@ -695,6 +801,152 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
         </aside>
       )}
     </div>
+  );
+}
+
+/** A small gold star at the top corner of a favorite. */
+function FavMark({ size }: { size: number }) {
+  const r = Math.max(5, size * 0.17);
+  return (
+    <g className="favmark" transform={`translate(${size * 0.38} ${-size * 0.38}) scale(${r / 10})`} aria-hidden="true" pointerEvents="none">
+      <path d="M0 -10 2.9 -3.4 10 -3.1 4.5 1.6 6.2 8.5 0 4.8 -6.2 8.5 -4.5 1.6 -10 -3.1 -2.9 -3.4Z" />
+    </g>
+  );
+}
+
+/**
+ * The star that marks an item as a favorite. The owner can press it to mark or unmark; anyone else
+ * only sees it on an item that is one.
+ */
+function FavButton({
+  item,
+  favorite,
+  onFavorite,
+  compact = false,
+}: {
+  item: Item;
+  favorite: boolean;
+  onFavorite?: (id: string, favorite: boolean) => void;
+  /** Just the star, for a row in a list. */
+  compact?: boolean;
+}) {
+  if (!onFavorite) {
+    return favorite ? (
+      <span className={compact ? "fav fav--compact fav--static" : "fav fav--static"} title="Favorite">
+        <span aria-hidden="true">★</span>
+        {compact ? <span className="sr-only">Favorite</span> : " Favorite"}
+      </span>
+    ) : null;
+  }
+  return (
+    <button
+      type="button"
+      className={compact ? "fav fav--compact" : "fav"}
+      aria-pressed={favorite}
+      aria-label={favorite ? `Take ${item.name} off your favorites` : `Add ${item.name} to your favorites`}
+      title={favorite ? "Remove from favorites" : "Add to favorites"}
+      onClick={() => onFavorite(item.id, !favorite)}
+    >
+      <span aria-hidden="true">{favorite ? "★" : "☆"}</span>
+      {!compact && (favorite ? " Favorite" : " Add to favorites")}
+    </button>
+  );
+}
+
+/** The rails across the back of a closet and the hook each hanging thing is on. */
+function HookRack({ x, placed, light }: { x: number; placed: HookPlaced[]; light: string }) {
+  const rows = [...new Set(placed.map((p) => p.peg))];
+  return (
+    <g aria-hidden="true" pointerEvents="none">
+      {rows.map((y) => (
+        <rect key={y} x={x - HOOK_WIDTH / 2 - 6} y={y - 2} width={HOOK_WIDTH + 12} height={4} rx={2} fill={light} opacity={0.45} />
+      ))}
+      {placed.map((p) => (
+        <path key={p.item.id} d={`M${p.x} ${p.peg + 5}V${p.peg - 1}a3 3 0 1 1 3 3`} fill="none" stroke={light} strokeWidth="2.2" strokeLinecap="round" />
+      ))}
+    </g>
+  );
+}
+
+/** A chest of drawers on a closet's floor: one drawer for tops, one for bottoms, one for the rest. Press a drawer to see what is folded in it. */
+function DrawerChest({
+  x,
+  groups,
+  light,
+  mid,
+  dark,
+  visible,
+  openId,
+  onPick,
+}: Tones & {
+  groups: { label: string; items: Item[] }[];
+  visible: boolean;
+  /** The container that is open, so its drawer is not also drawn shut. */
+  openId: string | null;
+  onPick: (label: string) => void;
+}) {
+  const { dx, width, top, bottom } = DRAWER_CHEST;
+  const left = x + dx;
+  const h = (bottom - top) / groups.length;
+  return (
+    <g>
+      <rect x={left - 3} y={top - 4} width={width + 6} height={bottom - top + 4} rx={4} fill={dark} />
+      <rect x={left - 6} y={top - 10} width={width + 12} height={7} rx={3} fill={light} />
+      {groups.map((g, k) => {
+        const y = top + k * h;
+        const has = g.items.length > 0;
+        const press = () => onPick(g.label);
+        return (
+          <g
+            key={g.label}
+            className={has ? "drawer is-live" : "drawer"}
+            role={has ? "button" : undefined}
+            tabIndex={has && visible ? 0 : undefined}
+            aria-expanded={has ? openId?.endsWith(`:${g.label}`) === true && openId.startsWith("drawer:") : undefined}
+            aria-label={has ? `${g.label} drawer, ${g.items.length} ${g.items.length === 1 ? "item" : "items"}` : undefined}
+            aria-hidden={has ? undefined : true}
+            onClick={
+              has
+                ? (e) => {
+                    e.stopPropagation();
+                    press();
+                  }
+                : undefined
+            }
+            onKeyDown={has ? (e) => onKey(e, press) : undefined}
+          >
+            {has && <title>{`${g.label} drawer`}</title>}
+            <rect x={left} y={y + 1.5} width={width} height={h - 3} rx={3} fill={mid} stroke="rgba(0,0,0,0.35)" strokeWidth="1.5" />
+            <text className="drawer__label" x={left + 7} y={y + 12}>
+              {g.label}
+            </text>
+            <rect x={left + width / 2 - 13} y={y + h - 13} width={26} height={6} rx={3} fill={dark} opacity={0.7} />
+            {has && (
+              <>
+                <circle className="tile__badge" cx={left + width - 9} cy={y + 10} r={6} />
+                <text className="tile__count" x={left + width - 9} y={y + 12.5} style={{ fontSize: 7.5 }}>
+                  {g.items.length}
+                </text>
+              </>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** A drawer pulled open: its front with the handle, and a dark opening along the top that what is inside comes out of. */
+function DrawerOpen({ box, fill, edge }: { box: PlacedBox; fill: string; edge: string }) {
+  const { left, w, h, base } = box;
+  const top = base - h;
+  return (
+    <g aria-hidden="true" pointerEvents="none">
+      <rect x={left - 4} y={top - 7} width={w + 8} height={13} rx={4} fill={edge} />
+      <rect x={left} y={top} width={w} height={h} rx={3} fill={fill} stroke="rgba(0,0,0,0.35)" strokeWidth="1.5" />
+      <rect x={left + 4} y={top - 3} width={w - 8} height={7} rx={3} fill="rgba(0,0,0,0.55)" />
+      <rect x={left + w / 2 - 13} y={base - 13} width={26} height={6} rx={3} fill={edge} opacity={0.7} />
+    </g>
   );
 }
 
@@ -783,8 +1035,9 @@ function Standing({
             onKeyDown={(e) => onKey(e, () => onPick(item))}
             transform={`translate(${x} ${y})`}
           >
-            <title>{item.name}</title>
+            <title>{item.favorite ? `${item.name} (favorite)` : item.name}</title>
             <ItemArt spec={artOf(item)} size={size} />
+            {item.favorite && <FavMark size={size} />}
           </g>
         );
         // What stands on the desk top can be moved on it. What is under the desk is on another level.
@@ -1110,6 +1363,9 @@ function Boxes({
   );
 }
 
+/** Things whose drawing fills its whole square (puzzle cubes), so what sticks out of a container is drawn smaller for them. */
+const CHUNKY = new Set<ArtKind>(["cube", "megaminx"]);
+
 /** What sticks out of a container is smaller than the container, never bigger than it. */
 const peekSizeFor = (containerW: number) => Math.min(52, Math.max(16, containerW * 0.65));
 
@@ -1145,7 +1401,7 @@ function Luggage({
   const peeking = peekPicks(items, slots.length);
   const peekSize = peek ?? peekSizeFor(w);
   const peekK = peekSize / 52;
-  const badge = Math.min(13, Math.max(8, w * 0.2));
+  const badge = Math.min(9.5, Math.max(6, w * 0.15));
   const flap = mix(color, "#ffffff", 0.18);
   const stacked = !!p.column && items.length === 0;
   const toggle = () => onToggle?.(stacked && p.column ? `stack:${p.column[0]}` : c.id);
@@ -1187,7 +1443,7 @@ function Luggage({
       <g className="box__peek">
         {peeking.map((it, i) => (
           <g key={it.id} transform={`translate(${slots[i].x} ${top - (slots[i].rise - 4) * peekK}) rotate(${slots[i].rot})`}>
-            <ItemArt spec={artOf(it)} size={peekSize} />
+            <ItemArt spec={artOf(it)} size={peekSize * (CHUNKY.has(artKind(it)) ? 0.6 : 1)} />
           </g>
         ))}
       </g>
@@ -1246,7 +1502,7 @@ function Luggage({
       )}
       {/* The inside of the opening: a darker rim along the top edge. */}
       {has && <rect x={left + 3} y={top + 2} width={w - 6} height={6} rx={3} fill="rgba(0,0,0,0.3)" />}
-      {live && has && (
+      {live && has && !wallet && !pouch && (
         <>
           <circle className="tile__badge" cx={left + w - 2} cy={top + 2} r={badge} />
           <text className="tile__count" x={left + w - 2} y={top + 2 + badge * 0.35} style={{ fontSize: badge }}>
@@ -1306,6 +1562,7 @@ function Burst({
   box,
   items,
   showBox,
+  backdrop,
   plan,
   groups,
   piles,
@@ -1316,6 +1573,8 @@ function Burst({
   items: Item[];
   /** Draw the container's look-alike under the items (not for a loose pile). */
   showBox: boolean;
+  /** Drawn under the items in place of the luggage look-alike (a drawer pulled open). */
+  backdrop?: ReactNode;
   plan: BurstPlan;
   /** The cash in the container, which the stand-in items for the handful and its total draw. */
   groups: CashGroup[];
@@ -1337,7 +1596,7 @@ function Burst({
     <g className="burst">
       {/* Dims the room; a click on it falls through to the scene and closes the container. */}
       <rect className="burst__veil" x={-4000} y={-4000} width={9200} height={9200} />
-      {showBox && <Luggage p={box} items={items} open visible={visible} decor />}
+      {showBox && (backdrop ?? <Luggage p={box} items={items} open visible={visible} decor />)}
       <g transform={`translate(${anchorX} ${anchorY})`}>
       {items.map((it, i) => (
         <g
@@ -1362,7 +1621,10 @@ function Burst({
             ) : isPileId(it.id) ? (
               <PileArt pile={piles.find((p) => p.id === it.id) ?? { id: it.id, label: it.name, kind: "books", items: [] }} size={BURST_ITEM} />
             ) : (
-              <ItemArt spec={artOf(it)} size={BURST_ITEM} />
+              <>
+                <ItemArt spec={artOf(it)} size={BURST_ITEM} />
+                {it.favorite && <FavMark size={BURST_ITEM} />}
+              </>
             )}
           </g>
         </g>

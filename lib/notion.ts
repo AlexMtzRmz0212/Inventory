@@ -3,6 +3,7 @@ import { Client } from "@notionhq/client";
 import { cacheLife, cacheTag } from "next/cache";
 import { demoInventory } from "./demo-data";
 import type {
+  ClosetSpot,
   Container,
   Inventory,
   Item,
@@ -38,6 +39,7 @@ const select = (p?: RawProp): string | null =>
   p?.select?.name ?? p?.status?.name ?? null;
 const num = (p?: RawProp): number | null => p?.number ?? null;
 const firstRelation = (p?: RawProp): string | null => p?.relation?.[0]?.id ?? null;
+const closetSpotOf = (v: string | null): ClosetSpot | null => (v === "Hook" || v === "Drawer" ? v : null);
 
 async function queryAll(dataSourceId: string): Promise<RawPage[]> {
   const notion = new Client({ auth: process.env.NOTION_TOKEN });
@@ -81,6 +83,17 @@ export async function setTableSpot(id: string, x: number | null, y: number | nul
     page_id: id,
     properties: { "Table X": { number: x }, "Table Y": { number: y } },
   });
+  return true;
+}
+
+/**
+ * Writes whether an item is a favorite: the `Favorite` checkbox, nothing else.
+ * Returns false when there is no token to write with (the demo world).
+ */
+export async function setFavoriteFlag(id: string, favorite: boolean): Promise<boolean> {
+  if (!process.env.NOTION_TOKEN) return false;
+  const notion = new Client({ auth: process.env.NOTION_TOKEN });
+  await notion.pages.update({ page_id: id, properties: { Favorite: { checkbox: favorite } } });
   return true;
 }
 
@@ -130,6 +143,8 @@ export async function getInventory(): Promise<Inventory> {
     cover: p.properties.Cover?.url || null,
     tableX: num(p.properties["Table X"]),
     tableY: num(p.properties["Table Y"]),
+    closetSpot: closetSpotOf(select(p.properties["Closet spot"])),
+    favorite: p.properties.Favorite?.checkbox ?? false,
   }));
 
   const containers: Container[] = boxPages.map((p) => ({
