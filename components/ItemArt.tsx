@@ -57,6 +57,41 @@ function DressTop({ shade, light }: Pick<Paint, "shade" | "light">) {
   );
 }
 
+/** A coat's body: longer than LONG, down to the knee. */
+const COAT = "M17 5 8 9 4 34l6 1 5-13v23h18V22l5 13 6-1-4-25-9-4q-7 6-14 0Z";
+
+/** A hood around the neck, seen from the front: its outer shape, the dark opening, and the fold where it meets the shoulders. */
+function Hood({ fill, shade }: Pick<Paint, "fill" | "shade">) {
+  return (
+    <>
+      <path d="M14.500 8.500Q12.500 1.500 24 1.500Q35.500 1.500 33.500 8.500Q31.500 14 24 14.500Q16.500 14 14.500 8.500Z" fill={fill} />
+      <path d="M19 8.500Q24 14 29 8.500Q28.500 4.500 24 4.500Q19.500 4.500 19 8.500Z" fill={shade} stroke="none" />
+    </>
+  );
+}
+
+/** A zipper from `top` to `bottom` down the middle: closed with a pull tab, or open with the lining showing between the teeth. */
+function Zip({ fill, shade, light, pale, spec, top, bottom }: Pick<Paint, "fill" | "shade" | "light" | "pale" | "spec"> & { top: number; bottom: number }) {
+  const teeth = pale ? shade : light;
+  if (spec.open) {
+    // The opening widens toward the hem, over a darker lining.
+    return (
+      <>
+        <path d={`M19.500 ${top - 1}Q24 ${top + 3} 28.500 ${top - 1}L32 ${bottom}H16Z`} fill={mix(fill, "#0a1a2a", 0.7)} />
+        <path d={`M19.500 ${top - 1}L16 ${bottom}M28.500 ${top - 1}L32 ${bottom}`} fill="none" stroke={OUTLINE} strokeWidth="1.400" />
+        <path d={`M19.100 ${top + 2}L16.800 ${bottom - 1}M28.900 ${top + 2}L31.200 ${bottom - 1}`} fill="none" stroke={teeth} strokeWidth="1.100" strokeDasharray="1 1.200" />
+      </>
+    );
+  }
+  return (
+    <>
+      <path d={`M24 ${top + 2}V${bottom}`} fill="none" stroke={shade} strokeWidth="1.800" />
+      <path d={`M24 ${top + 2}V${bottom}`} fill="none" stroke={teeth} strokeWidth="1" strokeDasharray="1 1.200" />
+      <rect x="22.600" y={top + 1} width="2.800" height="4.500" rx="1" fill={light} stroke={shade} strokeWidth="0.800" />
+    </>
+  );
+}
+
 const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
   tee: ({ fill }) => <path d={TEE} fill={fill} />,
   teeLong: ({ fill, shade }) => (
@@ -127,12 +162,59 @@ const DRAW: Record<ArtKind, (p: Paint) => ReactNode> = {
       <circle cx="24" cy="33" r="1.4" fill={shade} stroke="none" />
     </>
   ),
-  jacket: ({ fill, shade }) => (
+  // A zip-up jacket: a standing collar, a zipper down the middle (or open, showing the lining) and slanted pockets.
+  jacket: (p) => (
     <>
-      <path d={LONG} fill={fill} />
-      <path d="M17 6l7 5 7-5M24 11v31" fill="none" stroke={shade} strokeWidth="1.6" />
-      <path d="M5 31l6 1.5M43 31l-6 1.5" fill="none" stroke={shade} />
+      <path d={LONG} fill={p.fill} />
+      <path d="M5 31l6 1.5M43 31l-6 1.5" fill="none" stroke={p.shade} />
+      <Zip {...p} top={9} bottom={42} />
+      {p.spec.hood ? <Hood {...p} /> : <path d="M17 6l7 6 7-6-3-2-4 4-4-4Z" fill={p.shade} />}
     </>
+  ),
+  // A hoodie: a hood around the neck, drawstrings, a kangaroo pocket and ribbed cuffs and hem.
+  hoodie: (p) => (
+    <>
+      <path d={LONG} fill={p.fill} />
+      <path d="M4.6 33.5 10.6 34.6M43.4 33.5 37.4 34.6M15 40h18" fill="none" stroke={p.shade} strokeWidth="2.4" />
+      <path d="M17 30h14l2 8H15Z" fill="none" stroke={p.shade} strokeWidth="1.4" />
+      <Hood {...p} />
+      <path d="M21 14v8M27 14v8" fill="none" stroke={p.pale ? p.shade : p.light} strokeWidth="1.2" />
+    </>
+  ),
+  // A coat: longer than a jacket, with big lapels and buttons (or open, with a hood when it has one).
+  coat: (p) => (
+    <>
+      <path d={COAT} fill={p.fill} />
+      <path d="M5 30l6 1.5M43 30l-6 1.5M15 40h18" fill="none" stroke={p.shade} />
+      {p.spec.open ? (
+        <>
+          <path d="M20 8Q24 12 28 8L31 45H17Z" fill={p.shade} />
+          <path d="M20 8 17 45M28 8l3 37" fill="none" stroke={OUTLINE} strokeWidth="1.4" />
+        </>
+      ) : (
+        <>
+          <path d="M24 12v33" fill="none" stroke={p.shade} strokeWidth="1.4" />
+          {[22, 29, 36].map((y) => (
+            <circle key={y} cx="21" cy={y} r="1.3" fill={p.light} stroke={p.shade} strokeWidth="0.8" />
+          ))}
+        </>
+      )}
+      {p.spec.hood ? <Hood {...p} /> : <path d="M17 5.500l7 8 7-8-3-2-4 4-4-4Z" fill={p.light} stroke={p.shade} strokeWidth="1" />}
+    </>
+  ),
+  // A belt laid flat: a strap with stitching and holes, a keeper loop, and a buckle with its prong on the left.
+  // On a hook it hangs straight down from the rail by its buckle, with no hook of its own.
+  belt: ({ fill, shade, light, spec }) => (
+    <g transform={spec.hung ? "rotate(90 24 24)" : undefined}>
+      <path d="M13 19h27q4 0 4 5t-4 5H13Z" fill={fill} />
+      <path d="M14 21.200h25M14 26.800h25" fill="none" stroke={light} strokeWidth="0.8" strokeDasharray="2 1.600" opacity="0.7" />
+      {[28, 32, 36].map((x) => (
+        <circle key={x} cx={x} cy="24" r="1.100" fill={shade} stroke="none" />
+      ))}
+      <rect x="20" y="18" width="3.500" height="12" rx="1" fill={shade} />
+      <Rod d="M3.500 17.500h9.500v13H3.500Z" w={2.600} color="#d5dae1" />
+      <Rod d="M8 24h12" w={2} color="#d5dae1" />
+    </g>
   ),
   scarf: ({ fill, shade }) => (
     <>

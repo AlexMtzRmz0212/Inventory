@@ -633,7 +633,7 @@ export function hookLayout(items: Item[], cx: number): HookPlaced[] {
 export const DRAWER_LABELS = ["Tops", "Bottoms", "Other"] as const;
 export type DrawerLabel = (typeof DRAWER_LABELS)[number];
 
-const TOPS = new Set<ArtKind>(["tee", "teeLong", "polo", "poloLong", "dress", "dressLong", "sweater", "jersey", "vest", "blazer", "jacket"]);
+const TOPS = new Set<ArtKind>(["tee", "teeLong", "polo", "poloLong", "dress", "dressLong", "sweater", "jersey", "vest", "blazer", "jacket", "hoodie", "coat"]);
 const BOTTOMS = new Set<ArtKind>(["pants", "shorts", "sportShorts", "swim"]);
 
 /** Which drawer a folded item goes in: shirts and the like on top, trousers and shorts below, the rest last. */

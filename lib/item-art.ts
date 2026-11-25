@@ -27,6 +27,9 @@ export type ArtKind =
   | "vest"
   | "blazer"
   | "jacket"
+  | "hoodie"
+  | "coat"
+  | "belt"
   | "scarf"
   | "pants"
   | "shorts"
@@ -79,7 +82,7 @@ export type ArtKind =
   | "deskparts"
   | "box";
 
-type ItemLike = Pick<Item, "name" | "category"> & Partial<Pick<Item, "clothesType" | "color" | "cover" | "notes">>;
+type ItemLike = Pick<Item, "name" | "category"> & Partial<Pick<Item, "clothesType" | "color" | "cover" | "notes" | "closetSpot">>;
 
 /** Name hints, checked in order: the most specific first ("Laptop charger" is a charger, not a laptop). */
 const BY_NAME: [RegExp, ArtKind][] = [
@@ -135,11 +138,15 @@ const BY_NAME: [RegExp, ArtKind][] = [
   [/\b(cap|caps|hat|beanie)\b/i, "cap"],
   [/\bsocks?\b/i, "sock"],
   [/trunks|swim/i, "swim"],
+  [/\bbelts?\b/i, "belt"],
   [/\bshorts\b/i, "shorts"],
   [/pants|jeans|trousers|chino|sweatpants|leggings/i, "pants"],
   [/\bvest\b/i, "vest"],
   [/blazer|sport coat/i, "blazer"],
-  [/coat|jacket|hoodie|parka/i, "jacket"],
+  // A hoodie has a hood and a front pocket; a coat is long; a jacket is short with a zipper.
+  [/hoodie|hooded sweatshirt/i, "hoodie"],
+  [/\bcoat\b|parka|overcoat|peacoat/i, "coat"],
+  [/jacket|windbreaker|bomber|anorak/i, "jacket"],
   [/scarf/i, "scarf"],
   [/jersey/i, "jersey"],
   [/sweater|sweatshirt|pullover/i, "sweater"],
@@ -211,7 +218,7 @@ export function artKind(item: ItemLike): ArtKind {
 
 /** Colors that read on the dark room and backdrop; "black" is a mid gray so it and its outline both show. */
 const COLOR_WORDS: [string, string][] = [
-  ["black", "#6b7683"],
+  ["black", "#454d5a"],
   ["light brown", "#b98a5a"],
   ["light green", "#9fe0b0"],
   ["lime green", "#a6e22e"],
@@ -284,6 +291,7 @@ const KIND_DEFAULT: Partial<Record<ArtKind, string>> = {
   bedding: "#9aa7b5",
   pillow: "#eef2f5",
   passport: "#1e5b3a",
+  belt: "#8a5a36",
 };
 
 /** The color field wins, then a color word in the name, then what that kind of thing usually is. Bills are the color of the real note. */
@@ -322,6 +330,12 @@ export interface ArtSpec {
   port: string | null;
   /** Pillows: a pair, from "(x2)" in the name. */
   pair: boolean;
+  /** Coats and jackets: with a hood, from "hood" in the name or notes. (Hoodies always have one.) */
+  hood: boolean;
+  /** Belts: hanging from the closet rail by the buckle, with no hook, instead of lying flat. */
+  hung: boolean;
+  /** Coats and jackets: worn unzipped, from "open" or "unzipped" in the notes. */
+  open: boolean;
 }
 
 const PORT_COLORS: Record<string, string> = {
@@ -348,6 +362,9 @@ export function billSpec(b: Pick<Bill, "currency" | "denom">): ArtSpec {
     cable: null,
     port: null,
     pair: false,
+    hood: false,
+    hung: false,
+    open: false,
   };
 }
 
@@ -362,6 +379,9 @@ export function artOf(item: ItemLike): ArtSpec {
     pair: kind === "pillow" && /x2|two|pair/i.test(item.name),
     cable: kind === "usbcable" ? (/\bc[- ]?(to|-)[- ]?c\b/i.test(item.name) ? "cc" : "ac") : null,
     port: PORT_COLORS[/\b(\w+) port\b/i.exec(item.name)?.[1]?.toLowerCase() ?? ""] ?? null,
+    hood: kind === "hoodie" || ((kind === "coat" || kind === "jacket") && /hood/i.test(`${item.name} ${item.notes ?? ""}`)),
+    hung: kind === "belt" && item.closetSpot === "Hook",
+    open: (kind === "coat" || kind === "jacket") && /\bopen(ed)?\b|unzipped|unbuttoned/i.test(item.notes ?? ""),
     fill: itemTint(item),
     accent: fields[1] ?? null,
     pattern: /sudoku/i.test(item.name) ? "sudoku" : /palm/i.test(`${item.name} ${item.notes ?? ""}`) ? "palm" : null,

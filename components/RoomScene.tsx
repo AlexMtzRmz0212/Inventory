@@ -472,8 +472,9 @@ export default function RoomScene({ site, idx, inventory: base, tint, focusId, v
     }
     // A couch sits low in the room, so look at it lower and closer.
     if (spotIndex >= 0 && kinds[spotIndex] === "couch") return { cx: xs[spotIndex], cy: 490, w: Math.max(460, 300 * a) };
-    // A closet fills more of the screen, so what is on its shelf and floor reads clearly.
-    if (spotIndex >= 0 && kinds[spotIndex] === "closet") return { cx: xs[spotIndex], cy: 380, w: Math.max(500, 380 * a) };
+    // A closet fills the screen, its edges almost on the view's edges. The view is 400 tall, from 175 (the closet
+    // starts at 190) to 575 (its base is at 570); it is 400 wide at least, and wider on a wide screen so the height holds.
+    if (spotIndex >= 0 && kinds[spotIndex] === "closet") return { cx: xs[spotIndex], cy: 375, w: Math.max(400, 400 * a) };
     return spotIndex >= 0
       ? { cx: xs[spotIndex], cy: 400, w: Math.max(520, 420 * a) }
       : // Mom's apartment is aimed higher, so everything sits lower in the view: less floor, more wall.
@@ -861,7 +862,8 @@ function HookRack({ x, placed, light }: { x: number; placed: HookPlaced[]; light
       {rows.map((y) => (
         <rect key={y} x={x - HOOK_WIDTH / 2 - 6} y={y - 2} width={HOOK_WIDTH + 12} height={4} rx={2} fill={light} opacity={0.45} />
       ))}
-      {placed.map((p) => (
+      {/* A belt hangs from the rail by its buckle, with no hook. */}
+      {placed.filter((p) => artKind(p.item) !== "belt").map((p) => (
         <path key={p.item.id} d={`M${p.x} ${p.peg + 5}V${p.peg - 1}a3 3 0 1 1 3 3`} fill="none" stroke={light} strokeWidth="2.2" strokeLinecap="round" />
       ))}
     </g>
@@ -1441,11 +1443,18 @@ function Luggage({
       )}
       {/* Behind the body, so only the top of each item shows above the opening. */}
       <g className="box__peek">
-        {peeking.map((it, i) => (
-          <g key={it.id} transform={`translate(${slots[i].x} ${top - (slots[i].rise - 4) * peekK}) rotate(${slots[i].rot})`}>
-            <ItemArt spec={artOf(it)} size={peekSize * (CHUNKY.has(artKind(it)) ? 0.6 : 1)} />
-          </g>
-        ))}
+        {peeking.map((it, i) => {
+          const chunky = CHUNKY.has(artKind(it));
+          const size = peekSize * (chunky ? 0.6 : 1);
+          // A cube's lowest corner is 5/12 of its size below its center. Keep it sunk behind the opening so it peeks out instead of floating.
+          const lift = (slots[i].rise - 4) * peekK;
+          const sunk = chunky ? Math.min(lift, size * 0.12) : lift;
+          return (
+            <g key={it.id} transform={`translate(${slots[i].x} ${top - sunk}) rotate(${slots[i].rot})`}>
+              <ItemArt spec={artOf(it)} size={size} />
+            </g>
+          );
+        })}
       </g>
       {bag && (
         <>
@@ -1502,7 +1511,7 @@ function Luggage({
       )}
       {/* The inside of the opening: a darker rim along the top edge. */}
       {has && <rect x={left + 3} y={top + 2} width={w - 6} height={6} rx={3} fill="rgba(0,0,0,0.3)" />}
-      {live && has && !wallet && !pouch && (
+      {live && has && !wallet && !pouch && !card && (
         <>
           <circle className="tile__badge" cx={left + w - 2} cy={top + 2} r={badge} />
           <text className="tile__count" x={left + w - 2} y={top + 2 + badge * 0.35} style={{ fontSize: badge }}>
